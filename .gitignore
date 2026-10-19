@@ -1,0 +1,12 @@
+node_modules/
+dist/
+__pycache__/
+.DS_Store
+
+# Signing state: a keychain password, and the identity and profile in use.
+ios-tools/.secrets/
+ios-tools/signing.json
+*.p8
+*.p12
+*.mobileprovision
+.claude/

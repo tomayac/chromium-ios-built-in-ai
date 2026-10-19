@@ -1,0 +1,17 @@
+{
+  "name": "built-in-ai-native-bundle",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The built-in AI API polyfills as one script for browsers to inject into every page, backed by on-device models of the browser itself.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "fix": "eslint . --fix && prettier --write .",
+    "lint": "eslint . && prettier --check ."
+  },
+  "author": "Thomas Steiner (tomac@google.com)",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "vite": "^8.3.1"
+  }
+}
