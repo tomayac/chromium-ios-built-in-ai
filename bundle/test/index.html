@@ -109,7 +109,7 @@
         expectedOutputs: [{ type: 'text', languages: ['en'] }],
       };
 
-      document.querySelector('#run').addEventListener('click', async () => {
+      const run = async () => {
         results.textContent = '';
         let session;
 
@@ -144,7 +144,9 @@
 
         await check('prompt() remembers', async () => {
           await session.prompt('My name is Ada. Just say OK.');
-          const answer = await session.prompt('What is my name?');
+          const answer = await session.prompt(
+            'What name did I tell you? Answer with the name only.',
+          );
           if (!/ada/i.test(answer)) {
             throw new Error(answer);
           }
@@ -246,7 +248,31 @@
         });
 
         document.title = 'Built-in AI Check: done';
-      });
+        report();
+      };
+
+      // Sends the results to the test server, if this page came from one.
+      const report = () => {
+        const rows = [...results.rows].map((tr) => ({
+          check: tr.cells[0].textContent,
+          detail: tr.cells[1].textContent,
+        }));
+        fetch('/results', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            env: document.querySelector('#env').textContent,
+            userAgent: navigator.userAgent,
+            rows,
+          }),
+        }).catch(() => {});
+      };
+
+      document.querySelector('#run').addEventListener('click', run);
+      // `?autorun` runs the checks on load, for unattended test runs.
+      if (new URLSearchParams(location.search).has('autorun')) {
+        run();
+      }
     </script>
   </body>
 </html>

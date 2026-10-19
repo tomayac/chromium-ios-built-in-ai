@@ -74,6 +74,21 @@ page ── LanguageModel / Summarizer / … (polyfills, page world)
 The APIs are behind the `ios-built-in-ai-apis` flag in `chrome://flags`, which
 is on by default in this patch.
 
+## Testing in the simulator
+
+`ios-tools/run-simulator.sh` installs a simulator build, opens
+`bundle/test/index.html` in it, and prints what the page reports:
+
+```sh
+ios-tools/run-simulator.sh /path/to/chromium/src/out/ios-sim/Chromium.app
+```
+
+It needs [AXe](https://github.com/cameroncooke/AXe) to accept the "Open in
+Chromium?" prompt. With Apple Foundation Models on an iOS 27 simulator, all
+checks pass: `availability()`, `create()`, `prompt()`, `promptStreaming()`,
+`responseConstraint`, `AbortSignal`, `clone()`, `measureContextUsage()`,
+`Summarizer`, and `Translator`.
+
 ## Signing for a device
 
 `ios-tools/asc_provision.py` takes an

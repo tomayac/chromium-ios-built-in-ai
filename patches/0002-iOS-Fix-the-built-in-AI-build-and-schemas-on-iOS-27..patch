@@ -1,0 +1,197 @@
+From 907dbeb11faa3ecf31d345004ec0d9f2b96f2dc0 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Mon, 19 Oct 2026 19:04:22 +0200
+Subject: [PATCH 2/2] [iOS] Fix the built-in AI build, and schemas on iOS 27.0
+
+Builds LiteRT-LM's Swift API in the Swift 5 language mode its package
+declares, and passes the flag that keeps FoundationModels weakly linked
+in a form the Swift wrapper parses. Imports the engine's generated
+header by its actual name.
+
+Retries a `responseConstraint` that the iOS 27.0 `GenerationSchema`
+decoder rejects in the shape Foundation Models encodes schemas in, with
+titles, property order, and `additionalProperties` on every object.
+
+Lets //ios/chrome/app build with every app extension disabled.
+---
+ ios/chrome/app/BUILD.gn                       |  3 +
+ ios/chrome/browser/built_in_ai/model/BUILD.gn |  9 ++-
+ .../model/built_in_ai_engine.swift            | 57 ++++++++++++++++++-
+ .../model/built_in_ai_java_script_feature.mm  |  2 +-
+ .../model/built_in_ai_tab_helper.mm           |  2 +-
+ third_party/litert_lm/BUILD.gn                | 14 ++++-
+ 6 files changed, 76 insertions(+), 11 deletions(-)
+
+diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
+index 59ac311399a10..ece70ffe8426c 100644
+--- a/ios/chrome/app/BUILD.gn
++++ b/ios/chrome/app/BUILD.gn
+@@ -1017,6 +1017,9 @@ chrome_app("chrome") {
+ 
+ if (current_toolchain == default_toolchain && !ios_chrome_generate_order_file) {
+   _extension_toolchain = "${current_toolchain}_app_ext"
++
++  # Unused when every extension is disabled.
++  not_needed([ "_extension_toolchain" ])
+   if (ios_enable_share_extension) {
+     extension_bundle_data("share_extension_bundle") {
+       extension_name = "share_extension.appex"
+diff --git a/ios/chrome/browser/built_in_ai/model/BUILD.gn b/ios/chrome/browser/built_in_ai/model/BUILD.gn
+index a53b4c3bd1779..fbc9a9410f4cf 100644
+--- a/ios/chrome/browser/built_in_ai/model/BUILD.gn
++++ b/ios/chrome/browser/built_in_ai/model/BUILD.gn
+@@ -40,17 +40,16 @@ swift_source_set("engine_swift") {
+     "CoreGraphics.framework",
+     "Foundation.framework",
+     "ImageIO.framework",
++    "UIKit.framework",
+   ]
+ 
+   # FoundationModels exists from iOS 26 on, and Chrome runs on earlier
+-  # versions. Link it weakly, and keep Swift from linking it strongly on its
+-  # own when the module is imported.
++  # versions. Link it weakly, and keep Swift from linking the frameworks it
++  # imports strongly on its own. The ones above are linked as listed.
+   weak_frameworks = [ "FoundationModels.framework" ]
+   swiftflags = [
+     "-Xfrontend",
+-    "-disable-autolink-framework",
+-    "-Xfrontend",
+-    "FoundationModels",
++    "-disable-autolink-frameworks",
+   ]
+ 
+   if (enable_litert_lm) {
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 13fd93d193869..8c3c890b7c576 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -965,15 +965,66 @@ final class AISession: @unchecked Sendable {
+     }
+ 
+     /// Converts a JSON Schema `responseConstraint`. `GenerationSchema` decodes
+-    /// JSON Schema directly.
++    /// JSON Schema directly, though some OS versions only read it in the shape
++    /// they encode it in, with every object carrying a title, its property order,
++    /// and `additionalProperties`. A schema that fails as given is retried in
++    /// that shape.
+     @available(iOS 26.0, macOS 26.0, *)
+     static func generationSchema(_ schema: Data) throws -> GenerationSchema {
++      let decoder = JSONDecoder()
++      if let decoded = try? decoder.decode(GenerationSchema.self, from: schema) {
++        return decoded
++      }
+       do {
+-        return try JSONDecoder().decode(GenerationSchema.self, from: schema)
++        let object = try JSONSerialization.jsonObject(with: schema)
++        let normalized = try JSONSerialization.data(
++          withJSONObject: normalizedSchema(object, title: "Response"))
++        return try decoder.decode(GenerationSchema.self, from: normalized)
+       } catch {
+         throw BuiltInAIError.notSupported(
+-          "The response constraint is not supported: \(error.localizedDescription)")
++          "The response constraint is not supported: \(error)")
++      }
++    }
++
++    /// `schema` with the keys Foundation Models writes into every object
++    /// schema, applied to nested schemas, too.
++    static func normalizedSchema(_ schema: Any, title: String) -> Any {
++      guard var dictionary = schema as? [String: Any] else { return schema }
++      if var properties = dictionary["properties"] as? [String: Any] {
++        for (name, property) in properties {
++          properties[name] = normalizedSchema(property, title: name.capitalized)
++        }
++        dictionary["properties"] = properties
++        if dictionary["x-order"] == nil {
++          // JSON objects lose their key order in `JSONSerialization`, so the
++          // order of `required` is the best guess at the author's.
++          let required = dictionary["required"] as? [String] ?? []
++          dictionary["x-order"] =
++            required.filter { properties[$0] != nil }
++            + properties.keys.filter { !required.contains($0) }.sorted()
++        }
++        dictionary["additionalProperties"] = dictionary["additionalProperties"] ?? false
++        dictionary["type"] = dictionary["type"] ?? "object"
++      }
++      if dictionary["type"] as? String == "object" || dictionary["properties"] != nil {
++        dictionary["title"] = dictionary["title"] ?? title
++      }
++      if let items = dictionary["items"] {
++        dictionary["items"] = normalizedSchema(items, title: title + "Item")
++      }
++      for key in ["anyOf", "oneOf", "allOf"] {
++        if let choices = dictionary[key] as? [Any] {
++          dictionary[key] = choices.enumerated().map {
++            normalizedSchema($1, title: "\(title)\($0)")
++          }
++        }
++      }
++      if let definitions = dictionary["$defs"] as? [String: Any] {
++        dictionary["$defs"] = definitions.reduce(into: [String: Any]()) {
++          $0[$1.key] = normalizedSchema($1.value, title: $1.key)
++        }
+       }
++      return dictionary
+     }
+   #endif
+ }
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
+index e9b4cb34f0253..e71a8a83425cf 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
+@@ -11,7 +11,7 @@
+ #import "base/task/bind_post_task.h"
+ #import "base/task/sequenced_task_runner.h"
+ #import "base/values.h"
+-#import "ios/chrome/browser/built_in_ai/model/built_in_ai_engine_swift.h"
++#import "ios/chrome/browser/built_in_ai/model/engine_swift.h"
+ #import "ios/chrome/browser/built_in_ai/model/built_in_ai_tab_helper.h"
+ #import "ios/web/public/js_messaging/script_message.h"
+ #import "ios/web/public/js_messaging/web_frame.h"
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_tab_helper.mm b/ios/chrome/browser/built_in_ai/model/built_in_ai_tab_helper.mm
+index e87f5cd0e177c..ee82bd46f6d46 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_tab_helper.mm
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_tab_helper.mm
+@@ -5,7 +5,7 @@
+ #import "ios/chrome/browser/built_in_ai/model/built_in_ai_tab_helper.h"
+ 
+ #import "base/strings/sys_string_conversions.h"
+-#import "ios/chrome/browser/built_in_ai/model/built_in_ai_engine_swift.h"
++#import "ios/chrome/browser/built_in_ai/model/engine_swift.h"
+ #import "ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.h"
+ 
+ BuiltInAITabHelper::BuiltInAITabHelper(web::WebState* web_state)
+diff --git a/third_party/litert_lm/BUILD.gn b/third_party/litert_lm/BUILD.gn
+index 543e4cb818fe1..b7033296ab82d 100644
+--- a/third_party/litert_lm/BUILD.gn
++++ b/third_party/litert_lm/BUILD.gn
+@@ -18,6 +18,15 @@ config("clitertlm") {
+   ]
+ }
+ 
++# LiteRT-LM's Swift API is written for the Swift 5 language mode, as its
++# Package.swift declares. Appended last, so it overrides the default of 6.
++config("swift5") {
++  swiftflags = [
++    "-swift-version",
++    "5",
++  ]
++}
++
+ # The `LiteRTLM` Swift module, over the prebuilt C API in CLiteRTLM.framework.
+ # The app has to embed that framework, see `litert_lm_framework_dir`.
+ swift_source_set("litert_lm") {
+@@ -42,5 +51,8 @@ swift_source_set("litert_lm") {
+ 
+   # Upstream code, built as upstream builds it.
+   configs -= [ "//build/config/compiler:chromium_code" ]
+-  configs += [ "//build/config/compiler:no_chromium_code" ]
++  configs += [
++    "//build/config/compiler:no_chromium_code",
++    ":swift5",
++  ]
+ }
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
