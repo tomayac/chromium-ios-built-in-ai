@@ -285,6 +285,12 @@ Beta App Review contact from `ios-tools/testflight.json` (see
 `testflight.example.json`; it stays out of git), adds the build to a group with
 a public link, and submits it for review.
 
+`--notarize` submits the build for notarization, which alternative app
+marketplaces such as AltStore PAL need. It goes out as the app version of the
+build's `CFBundleShortVersionString`, with review type Notarization. The app
+has to be available in the EU, and App Store Connect needs screenshots for it,
+which `ios-tools/upload_screenshots.py` uploads.
+
 The API cannot create apps, so the app record needs one visit to
 [App Store Connect](https://appstoreconnect.apple.com/apps) first: **New App**,
 iOS, any unique name, and the App ID's bundle ID.

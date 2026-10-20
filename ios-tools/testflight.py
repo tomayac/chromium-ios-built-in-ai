@@ -301,6 +301,62 @@ def release(asc, app, build, config, notes):
   print(f'Public link, live once the review passes: {link}')
 
 
+def notarize(asc, app, build, short_version):
+  """Submits `build` for notarization, for alternative app marketplaces.
+
+  It goes out as the app version `short_version`, with review type
+  Notarization, which App Store Connect creates if needed.
+  """
+  versions = asc.get(f'/apps/{app}/appStoreVersions?limit=50')['data']
+  version = next((v for v in versions
+                  if v['attributes']['versionString'] == short_version), None)
+  editable = ('PREPARE_FOR_SUBMISSION', 'READY_FOR_REVIEW',
+              'DEVELOPER_REJECTED', 'REJECTED', 'METADATA_REJECTED',
+              'INVALID_BINARY')
+  if version and version['attributes']['appVersionState'] not in editable:
+    sys.exit(f'Version {short_version} is '
+             f'{version["attributes"]["appVersionState"]}; a new build needs a '
+             'new version number for notarization.')
+  if not version:
+    version = asc.post('/appStoreVersions', {
+        'data': {'type': 'appStoreVersions',
+                 'attributes': {'platform': 'IOS', 'versionString': short_version,
+                                'reviewType': 'NOTARIZATION'},
+                 'relationships': {'app': {'data': {'type': 'apps',
+                                                    'id': app}}}}})['data']
+  else:
+    asc.request('PATCH', f'/appStoreVersions/{version["id"]}', {
+        'data': {'type': 'appStoreVersions', 'id': version['id'],
+                 'attributes': {'reviewType': 'NOTARIZATION'}}})
+  asc.request('PATCH', f'/appStoreVersions/{version["id"]}/relationships/build',
+              {'data': {'type': 'builds', 'id': build}})
+
+  # A submission that never went out can take the version; App Store Connect
+  # allows one open submission per platform.
+  open_states = ('READY_FOR_REVIEW',)
+  submissions = asc.get(f'/reviewSubmissions?filter[app]={app}'
+                        '&filter[platform]=IOS')['data']
+  submission = next((s for s in submissions
+                     if s['attributes']['state'] in open_states), None)
+  if not submission:
+    submission = asc.post('/reviewSubmissions', {
+        'data': {'type': 'reviewSubmissions', 'attributes': {'platform': 'IOS'},
+                 'relationships': {'app': {'data': {'type': 'apps',
+                                                    'id': app}}}}})['data']
+  items = asc.get(f'/reviewSubmissions/{submission["id"]}/items')['data']
+  if not items:
+    asc.post('/reviewSubmissionItems', {
+        'data': {'type': 'reviewSubmissionItems', 'relationships': {
+            'reviewSubmission': {'data': {'type': 'reviewSubmissions',
+                                          'id': submission['id']}},
+            'appStoreVersion': {'data': {'type': 'appStoreVersions',
+                                         'id': version['id']}}}}})
+  asc.request('PATCH', f'/reviewSubmissions/{submission["id"]}', {
+      'data': {'type': 'reviewSubmissions', 'id': submission['id'],
+               'attributes': {'submitted': True}}})
+  print(f'Submitted {short_version} for notarization.')
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
   parser.add_argument('--key-id', required=True)
@@ -314,6 +370,9 @@ def main():
   parser.add_argument('--notes', default='', help='what to test in this build')
   parser.add_argument('--release', action='store_true',
                       help='open the build to external testers')
+  parser.add_argument('--notarize', action='store_true',
+                      help='submit the build for notarization, which AltStore '
+                      'PAL and other alternative app marketplaces need')
   parser.add_argument('--skip-upload', metavar='BUILD_NUMBER',
                       help='release an uploaded build instead of a new one')
   args = parser.parse_args()
@@ -358,6 +417,8 @@ def main():
   print(f'Build {build_number} is ready for internal testers.')
   if args.release:
     release(asc, app, build, config, args.notes)
+  if args.notarize:
+    notarize(asc, app, build, info['CFBundleShortVersionString'])
 
 
 if __name__ == '__main__':
