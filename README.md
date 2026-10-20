@@ -51,6 +51,10 @@ on its own. Gemma runs in the browser, which manages it:
   the GPU. A GPU turn running as the browser goes to the background stops, and
   runs again in the foreground unless part of its answer reached the page.
 
+`bundle/test/multimodal.html` checks image and audio input with answers that are
+easy to verify: a canvas and a PNG `Blob` as images, a WAV `Blob` and an
+`AudioBuffer` of speech as audio, and both in one prompt.
+
 `bundle/test/lifecycle.html` exercises this: a text session, an image session,
 which needs the other file, and a second text turn.
 
