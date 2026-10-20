@@ -1,7 +1,7 @@
 From 35d4e2aeb1dadec55d18984e5f0e2ef31929be73 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 13:21:24 +0200
-Subject: [PATCH 08/10] [iOS] Prefer Gemma turns for the loaded engine
+Subject: [PATCH 08/11] [iOS] Prefer Gemma turns for the loaded engine
 
 The turn queue now runs waiting turns for the engine that is loaded
 first, and holds for 300 ms when only turns for another engine wait,

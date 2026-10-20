@@ -1,0 +1,50 @@
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+
+  The app icon: a generic browser globe with an AI sparkle, and the words
+  "Built-In AI". Opaque, as the App Store requires.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2F6BFF"/>
+      <stop offset="0.55" stop-color="#5B4CF0"/>
+      <stop offset="1" stop-color="#9B3FE0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.38" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="globe">
+      <circle cx="512" cy="400" r="232"/>
+    </clipPath>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+
+  <!-- Globe -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="26" stroke-linecap="round">
+    <circle cx="512" cy="400" r="232"/>
+    <g clip-path="url(#globe)">
+      <ellipse cx="512" cy="400" rx="104" ry="232"/>
+      <line x1="512" y1="168" x2="512" y2="632"/>
+      <line x1="280" y1="400" x2="744" y2="400"/>
+      <path d="M 300 290 Q 512 340 724 290"/>
+      <path d="M 300 510 Q 512 460 724 510"/>
+    </g>
+  </g>
+
+  <!-- AI sparkle, with a ring of background color that sets it off the globe -->
+  <g transform="translate(728 196)">
+    <path d="M 0 -118 C 14 -40 40 -14 118 0 C 40 14 14 40 0 118 C -14 40 -40 14 -118 0 C -40 -14 -14 -40 0 -118 Z"
+          fill="#FFFFFF" stroke="#4F55F2" stroke-width="22" stroke-linejoin="round" paint-order="stroke"/>
+    <path d="M 128 -96 C 133 -70 142 -61 168 -56 C 142 -51 133 -42 128 -16 C 123 -42 114 -51 88 -56 C 114 -61 123 -70 128 -96 Z"
+          fill="#FFFFFF"/>
+  </g>
+
+  <text x="512" y="842" text-anchor="middle"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-weight="700" font-size="134" letter-spacing="-2"
+        fill="#FFFFFF">Built-In AI</text>
+</svg>

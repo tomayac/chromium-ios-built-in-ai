@@ -86,7 +86,7 @@ if os.path.exists(source_path):
     source = json.load(open(source_path))
 else:
     source = {
-        'name': 'Chromium with Built-in AI',
+        'name': 'Built-In AI Browser',
         'subtitle': 'The built-in AI APIs on iOS, on device',
         'description': (
             'Chromium for iOS with the built-in AI APIs (Prompt, Summarizer, '
@@ -104,12 +104,13 @@ if apps:
     app = apps[0]
 else:
     app = {
-        'name': 'Chromium AI',
+        'name': 'Built-In AI Browser',
         'bundleIdentifier': bundle_id,
         'developerName': 'Thomas Steiner',
         'subtitle': 'The built-in AI APIs on every page',
         'localizedDescription': (
-            'An experimental build of Chromium for iOS where every web page can '
+            'An experimental web browser, built from Chromium for iOS, where every '
+            'web page can '
             'use LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, '
             'Translator, and LanguageDetector, with inference on the device.\n\n'
             'On devices with Apple Intelligence the APIs use Apple Foundation '

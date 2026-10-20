@@ -68,14 +68,19 @@ def next_build_number(asc, app, short_version):
   """`<major>.<build>.<n>`, with `n` one above every upload so far."""
   prefix = '.'.join(short_version.split('.')[:2]) + '.'
   highest = 0
-  path = f'/builds?filter[app]={app}&limit=200&fields[builds]=version'
-  while path:
-    listing = asc.get(path)
-    for build in listing['data']:
-      version = build['attributes']['version']
-      if version.startswith(prefix) and version[len(prefix):].isdigit():
-        highest = max(highest, int(version[len(prefix):]))
-    path = listing.get('links', {}).get('next', '').replace(asc_lib.API, '')
+  # Rejected uploads never become builds, and still take up their number.
+  versions = []
+  for path, attribute in (
+      (f'/builds?filter[app]={app}&limit=200&fields[builds]=version',
+       'version'),
+      (f'/apps/{app}/buildUploads?limit=200', 'cfBundleVersion')):
+    while path:
+      listing = asc.get(path)
+      versions += [item['attributes'][attribute] for item in listing['data']]
+      path = listing.get('links', {}).get('next', '').replace(asc_lib.API, '')
+  for version in versions:
+    if version.startswith(prefix) and version[len(prefix):].isdigit():
+      highest = max(highest, int(version[len(prefix):]))
   return f'{prefix}{highest + 1}'
 
 
@@ -172,13 +177,17 @@ def altool(action, ipa, key_id, issuer_id):
 
 def upload_problems(asc, app, build_number):
   """Apple's errors for the upload of `build_number`, once it failed."""
-  for upload in asc.get(f'/apps/{app}/buildUploads?limit=50')['data']:
-    attributes = upload['attributes']
-    if (attributes['cfBundleVersion'] == build_number
-        and attributes['state']['state'] == 'FAILED'):
-      return [f'{e["code"]}: {e["description"]}'
-              for e in attributes['state']['errors']] or ['FAILED']
-  return []
+  uploads = [u['attributes']
+             for u in asc.get(f'/apps/{app}/buildUploads?limit=200')['data']
+             if u['attributes']['cfBundleVersion'] == build_number]
+  if not uploads:
+    return []
+  # The newest upload counts, when a number was uploaded more than once.
+  latest = max(uploads, key=lambda attributes: attributes['createdDate'])
+  if latest['state']['state'] != 'FAILED':
+    return []
+  return [f'{e["code"]}: {e["description"]}'
+          for e in latest['state']['errors']] or ['FAILED']
 
 
 def wait_for_build(asc, app, build_number, timeout=3600):
@@ -212,8 +221,9 @@ def first(asc, path):
 def release(asc, app, build, config, notes):
   """Opens `build` to external testers through the public link."""
   locale = 'en-US'
-  localization = first(
-      asc, f'/apps/{app}/betaAppLocalizations?filter[locale]={locale}')
+  localization = next(
+      (l for l in asc.get(f'/apps/{app}/betaAppLocalizations')['data']
+       if l['attributes']['locale'] == locale), None)
   attributes = {
       'description': config['description'],
       'feedbackEmail': config['feedbackEmail'],

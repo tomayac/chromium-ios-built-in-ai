@@ -112,6 +112,7 @@ page ── LanguageModel / Summarizer / … (polyfills, page world)
 - `ios-tools/`: provisions a device build through the App Store Connect API,
   with no Xcode UI involved, and releases builds for AltStore and TestFlight.
 - `altstore/`: the AltStore source and its install page.
+- `icon/`: the app icon, as SVG and as the 1024 by 1024 PNG the build uses.
 - `site/`: other pages for GitHub Pages, such as the privacy policy.
 
 ## Building
@@ -229,7 +230,13 @@ symbol_level = 0
 enable_litert_lm = true
 ios_enable_memory_debugging = false
 ios_chrome_sideload_entitlements = true
+ios_chrome_display_name = "Built-In AI"
+ios_application_icons_target = "//ios/chrome/app/resources:built_in_ai_icons"
+ios_application_icons_target_legacy = "//ios/chrome/app/resources:no_icons"
 ```
+
+The last three lines name the app "Built-In AI" on the Home Screen and give it
+the icon from `icon/icon.svg`, free of Chromium's branding.
 
 `ios_enable_memory_debugging = false` leaves out the memory debugger, whose
 private UIKit call App Store Connect rejects.

@@ -1,17 +1,17 @@
 {
-  "name": "Chromium with Built-in AI",
+  "name": "Built-In AI Browser",
   "subtitle": "The built-in AI APIs on iOS, on device",
-  "description": "Chromium for iOS with the built-in AI APIs (Prompt, Summarizer, Writer, Rewriter, Translator, and Language Detector) backed by Apple Foundation Models, or by Gemma 4 on devices without Apple Intelligence.",
+  "description": "Built-In AI Browser, built from Chromium for iOS, with the built-in AI APIs (Prompt, Summarizer, Writer, Rewriter, Translator, and Language Detector) backed by Apple Foundation Models, or by Gemma 4 on devices without Apple Intelligence.",
   "iconURL": "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/icon.png",
   "website": "https://github.com/tomayac/chromium-ios-built-in-ai",
   "tintColor": "#1A73E8",
   "apps": [
     {
-      "name": "Chromium AI",
+      "name": "Built-In AI Browser",
       "bundleIdentifier": "com.tomayac.chromium.chrome.ios.dev",
       "developerName": "Thomas Steiner",
       "subtitle": "The built-in AI APIs on every page",
-      "localizedDescription": "An experimental build of Chromium for iOS where every web page can use LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, Translator, and LanguageDetector, with inference on the device.\n\nOn devices with Apple Intelligence the APIs use Apple Foundation Models. Elsewhere they use Gemma 4 E2B, downloaded once on first use (2 to 2.6 GB) and shared by all sites.\n\nThis is a personal experiment, and not an official Google or Chromium product.",
+      "localizedDescription": "An experimental web browser, built from Chromium for iOS, where every web page can use LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, Translator, and LanguageDetector, with inference on the device.\n\nOn devices with Apple Intelligence the APIs use Apple Foundation Models. Elsewhere they use Gemma 4 E2B, downloaded once on first use (2 to 2.6 GB) and shared by all sites.\n\nThis is a personal experiment, and not an official Google or Chromium product.",
       "iconURL": "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/icon.png",
       "tintColor": "#1A73E8",
       "category": "developer",
@@ -26,7 +26,7 @@
           "date": "2026-10-20",
           "localizedDescription": "First AltStore release, tested on an iPhone 11 Pro Max, where Gemma runs text prompts on the GPU, and image and audio prompts on the CPU.",
           "downloadURL": "https://github.com/tomayac/chromium-ios-built-in-ai/releases/download/v157.0.8092.0/Chromium-157.0.8092.0.ipa",
-          "size": 89508422,
+          "size": 85098518,
           "minOSVersion": "18.0"
         }
       ],
