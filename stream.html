@@ -1,0 +1,82 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Streaming Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 16px;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Streaming Check</h1>
+    <p id="status">Starting…</p>
+    <pre id="output"></pre>
+    <script type="module">
+      const status = document.querySelector('#status');
+      const output = document.querySelector('#output');
+      const question =
+        new URLSearchParams(location.search).get('q') ||
+        'How do I calculate the mean in Java?';
+
+      const session = await LanguageModel.create({
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      });
+
+      const started = performance.now();
+      const chunks = [];
+      let streamed = '';
+      let error = null;
+      status.textContent = 'Streaming…';
+      try {
+        for await (const chunk of session.promptStreaming(question)) {
+          chunks.push({ t: Math.round(performance.now() - started), n: chunk.length });
+          streamed += chunk;
+          output.textContent = streamed;
+          status.textContent = `Streaming: ${chunks.length} chunks, ${Math.round(performance.now() - started)} ms`;
+        }
+      } catch (e) {
+        error = `${e.name}: ${e.message}`;
+      }
+      const streamMs = Math.round(performance.now() - started);
+
+      const copy = await LanguageModel.create({
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      });
+      const whole = await copy.prompt(question);
+
+      status.textContent = `Done in ${streamMs} ms: ${chunks.length} chunks, ${streamed.length} characters streamed, ${whole.length} with prompt(). Stream error: ${error ?? 'none'}. Last chunk at ${chunks.at(-1)?.t ?? '-'} ms.`;
+      fetch('/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          env: navigator.userAgent,
+          rows: [],
+          question,
+          streamMs,
+          chunks,
+          streamed,
+          whole,
+          error,
+        }),
+      }).catch(() => {});
+    </script>
+  </body>
+</html>

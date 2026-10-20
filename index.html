@@ -1,0 +1,278 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Built-in AI Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --pass: #188038;
+        --fail: #c5221f;
+        --muted: #5f6368;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 8px;
+      }
+      button {
+        font: inherit;
+        padding: 10px 16px;
+        margin: 8px 0 12px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td {
+        border-top: 1px solid #8884;
+        padding: 6px 4px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      td:first-child {
+        white-space: nowrap;
+        font-weight: 600;
+      }
+      .pass {
+        color: var(--pass);
+      }
+      .fail {
+        color: var(--fail);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      progress {
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Built-in AI Check</h1>
+    <div class="muted" id="env"></div>
+    <button id="run">Run checks</button>
+    <progress id="progress" value="0" max="1" hidden></progress>
+    <table>
+      <tbody id="results"></tbody>
+    </table>
+    <script type="module">
+      const results = document.querySelector('#results');
+      const progress = document.querySelector('#progress');
+      document.querySelector('#env').textContent = [
+        `secure: ${isSecureContext}`,
+        ...[
+          'LanguageModel',
+          'Summarizer',
+          'Writer',
+          'Rewriter',
+          'Translator',
+          'LanguageDetector',
+        ].map((name) => `${name}: ${name in self ? 'yes' : 'no'}`),
+      ].join(' · ');
+
+      const row = (name, ok, detail) => {
+        const tr = document.createElement('tr');
+        const status = ok === null ? '…' : ok ? 'PASS' : 'FAIL';
+        tr.innerHTML = '<td></td><td></td>';
+        tr.cells[0].textContent = `${status} ${name}`;
+        tr.cells[0].className = ok === null ? 'muted' : ok ? 'pass' : 'fail';
+        tr.cells[1].textContent = detail;
+        results.append(tr);
+        return tr;
+      };
+
+      const check = async (name, fn) => {
+        const started = performance.now();
+        const tr = row(name, null, 'running');
+        try {
+          const detail = await fn();
+          const ms = Math.round(performance.now() - started);
+          tr.replaceWith(row(name, true, `${detail} (${ms} ms)`));
+        } catch (error) {
+          tr.replaceWith(row(name, false, `${error.name}: ${error.message}`));
+        }
+      };
+
+      const options = {
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      };
+
+      const run = async () => {
+        results.textContent = '';
+        let session;
+
+        await check('availability()', async () => {
+          return await LanguageModel.availability(options);
+        });
+
+        await check('create()', async () => {
+          progress.hidden = false;
+          session = await LanguageModel.create({
+            ...options,
+            initialPrompts: [
+              { role: 'system', content: 'You are terse. Answer briefly.' },
+            ],
+            monitor(m) {
+              m.addEventListener('downloadprogress', (e) => {
+                progress.value = e.loaded;
+              });
+            },
+          });
+          progress.hidden = true;
+          return `contextWindow ${session.contextWindow}, usage ${session.contextUsage}`;
+        });
+
+        await check('prompt()', async () => {
+          const answer = await session.prompt('Name three primary colors.');
+          if (!answer.trim()) {
+            throw new Error('Empty answer');
+          }
+          return answer.trim();
+        });
+
+        await check('prompt() remembers', async () => {
+          await session.prompt('My name is Ada. Just say OK.');
+          const answer = await session.prompt(
+            'What name did I tell you? Answer with the name only.',
+          );
+          if (!/ada/i.test(answer)) {
+            throw new Error(answer);
+          }
+          return answer.trim();
+        });
+
+        await check('promptStreaming()', async () => {
+          let chunks = 0;
+          let text = '';
+          for await (const chunk of session.promptStreaming(
+            'Count from 1 to 10, separated by commas.',
+          )) {
+            chunks++;
+            text += chunk;
+          }
+          if (!/10/.test(text)) {
+            throw new Error(text);
+          }
+          return `${chunks} chunks: ${text.trim()}`;
+        });
+
+        await check('responseConstraint', async () => {
+          const schema = {
+            type: 'object',
+            properties: {
+              rating: { type: 'integer', minimum: 1, maximum: 5 },
+              summary: { type: 'string' },
+            },
+            required: ['rating', 'summary'],
+          };
+          const json = await session.prompt(
+            'Rate this review: "The pasta was cold and the waiter was rude."',
+            { responseConstraint: schema },
+          );
+          const parsed = JSON.parse(json);
+          if (typeof parsed.rating !== 'number') {
+            throw new Error(json);
+          }
+          return json;
+        });
+
+        await check('AbortSignal', async () => {
+          const controller = new AbortController();
+          const pending = session.prompt('Write a long poem about the sea.', {
+            signal: controller.signal,
+          });
+          setTimeout(() => controller.abort(), 200);
+          try {
+            await pending;
+          } catch (error) {
+            if (error.name === 'AbortError') {
+              return 'aborted';
+            }
+            throw error;
+          }
+          throw new Error('not aborted');
+        });
+
+        await check('clone()', async () => {
+          const copy = await session.clone();
+          const answer = await copy.prompt('What is my name? One word.');
+          copy.destroy();
+          return answer.trim();
+        });
+
+        await check('measureContextUsage()', async () => {
+          const usage = await session.measureContextUsage('Hello there!');
+          return `${usage} tokens, session ${session.contextUsage}/${session.contextWindow}`;
+        });
+
+        session?.destroy();
+
+        await check('Summarizer', async () => {
+          const summarizer = await Summarizer.create({
+            type: 'tldr',
+            length: 'short',
+            format: 'plain-text',
+            expectedInputLanguages: ['en'],
+            outputLanguage: 'en',
+          });
+          const summary = await summarizer.summarize(
+            'The James Webb Space Telescope is a space telescope designed to ' +
+              'conduct infrared astronomy. Its high-resolution and ' +
+              'high-sensitivity instruments allow it to view objects too old, ' +
+              'distant, or faint for the Hubble Space Telescope.',
+          );
+          summarizer.destroy();
+          return summary.trim();
+        });
+
+        await check('Translator', async () => {
+          const translator = await Translator.create({
+            sourceLanguage: 'en',
+            targetLanguage: 'de',
+          });
+          const text = await translator.translate('Good morning, my friend.');
+          translator.destroy();
+          return text.trim();
+        });
+
+        document.title = 'Built-in AI Check: done';
+        report();
+      };
+
+      // Sends the results to the test server, if this page came from one.
+      const report = () => {
+        const rows = [...results.rows].map((tr) => ({
+          check: tr.cells[0].textContent,
+          detail: tr.cells[1].textContent,
+        }));
+        fetch('/results', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            env: document.querySelector('#env').textContent,
+            userAgent: navigator.userAgent,
+            rows,
+          }),
+        }).catch(() => {});
+      };
+
+      document.querySelector('#run').addEventListener('click', run);
+      // `?autorun` runs the checks on load, for unattended test runs.
+      if (new URLSearchParams(location.search).has('autorun')) {
+        run();
+      }
+    </script>
+  </body>
+</html>
