@@ -1,7 +1,7 @@
 From af8421e388b84963b00575b26fdc8c910853c9d1 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 17:04:05 +0200
-Subject: [PATCH 12/12] [iOS] Continue Gemma answers that the background
+Subject: [PATCH 12/13] [iOS] Continue Gemma answers that the background
  interrupts
 
 iOS stops GPU work in the background, so a GPU turn stops when the

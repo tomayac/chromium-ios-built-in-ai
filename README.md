@@ -70,6 +70,12 @@ on its own. Gemma runs in the browser, which manages it:
 easy to verify: a canvas and a PNG `Blob` as images, a WAV `Blob` and an
 `AudioBuffer` of speech as audio, and both in one prompt.
 
+`bundle/test/audio-formats.html` transcribes the same sentence as WAV, MP3, AAC
+(m4a), and a `MediaRecorder` recording, as an `ArrayBuffer` and as a `Blob`.
+LiteRT-LM reads WAV, MP3, and FLAC itself. Audio in other formats, foremost AAC,
+which `MediaRecorder` records on iOS, is decoded with AVFoundation into 16 kHz
+mono WAV first.
+
 `bundle/test/digits.html` asks for strings to be repeated verbatim (dates, phone
 numbers, long digit runs, codes, text with typos), where GPU precision problems
 show first. On an iPhone 11 Pro Max, the text-only GPU file repeats all of them

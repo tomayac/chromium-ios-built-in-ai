@@ -1,0 +1,159 @@
+From 06a099dbdc261aa98d6a39b32289f93f32c243ad Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 18:26:57 +0200
+Subject: [PATCH 13/13] [iOS] Decode AAC and other audio for Gemma
+
+LiteRT-LM decodes audio input with miniaudio, which reads WAV, MP3, and
+FLAC only. MediaRecorder records AAC on iOS, and iPhones save recordings
+as AAC, so pages passing either got "Failed to initialize miniaudio
+decoder". Audio in other formats is now decoded with AVFoundation into
+16 kHz mono WAV first. WAV, MP3, and FLAC go to LiteRT-LM unchanged.
+
+On an iPhone 11 Pro Max, WAV, MP3, AAC (m4a), and a MediaRecorder
+recording, each as an ArrayBuffer and as a Blob, all transcribe.
+---
+ ios/chrome/browser/built_in_ai/model/BUILD.gn |   1 +
+ .../model/built_in_ai_engine.swift            | 104 +++++++++++++++++-
+ 2 files changed, 104 insertions(+), 1 deletion(-)
+
+diff --git a/ios/chrome/browser/built_in_ai/model/BUILD.gn b/ios/chrome/browser/built_in_ai/model/BUILD.gn
+index b693312784fc1..f73e1ac000cfc 100644
+--- a/ios/chrome/browser/built_in_ai/model/BUILD.gn
++++ b/ios/chrome/browser/built_in_ai/model/BUILD.gn
+@@ -37,6 +37,7 @@ source_set("model") {
+ swift_source_set("engine_swift") {
+   sources = [ "built_in_ai_engine.swift" ]
+   frameworks = [
++    "AVFoundation.framework",
+     "CoreGraphics.framework",
+     "Foundation.framework",
+     "ImageIO.framework",
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 2e9aa1f0023ec..4e7ef1912c5bc 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -35,6 +35,7 @@
+ // `contents` uses the polyfill's wire format:
+ //   [{role: "user" | "model" | "system", parts: [{text} | {inlineData: {mimeType, data}}]}]
+ 
++import AVFoundation
+ import CoreGraphics
+ import Foundation
+ import ImageIO
+@@ -579,11 +580,112 @@ struct ChatContents {
+       }
+       return .image(image, data)
+     }
+-    if mimeType.hasPrefix("audio/") { return .audio(data) }
++    if mimeType.hasPrefix("audio/") { return .audio(try AudioInput.decodable(data)) }
+     throw BuiltInAIError.notSupported("Unsupported media type \(mimeType).")
+   }
+ }
+ 
++/// Audio in a format Gemma's audio input reads.
++///
++/// LiteRT-LM decodes audio with miniaudio, which reads WAV, MP3, and FLAC. Pages
++/// pass audio in other formats too, foremost AAC, which is what MediaRecorder
++/// records on iOS and what iPhones save recordings as. Those are decoded here,
++/// with AVFoundation, into 16 kHz mono WAV, the rate Gemma's audio encoder
++/// works at.
++enum AudioInput {
++  static let sampleRate = 16_000.0
++
++  static func decodable(_ data: Data) throws -> Data {
++    if miniaudioReads(data) { return data }
++    return try wav(from: data)
++  }
++
++  /// WAV, MP3, and FLAC, by their first bytes.
++  static func miniaudioReads(_ data: Data) -> Bool {
++    let bytes = [UInt8](data.prefix(4))
++    guard bytes.count == 4 else { return false }
++    return bytes == Array("RIFF".utf8)  // WAV
++      || bytes == Array("fLaC".utf8)  // FLAC
++      || bytes[0..<3] == ArraySlice("ID3".utf8)  // MP3 with an ID3 tag
++      || (bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0)  // MP3 frame
++  }
++
++  /// Decodes any audio file AVFoundation reads into 16 kHz mono 16-bit WAV.
++  static func wav(from data: Data) throws -> Data {
++    // AVAudioFile reads from files, and takes a hint from the extension.
++    let isMPEG4 = data.count > 8 && data[4..<8] == Data("ftyp".utf8)
++    let url = FileManager.default.temporaryDirectory
++      .appendingPathComponent(UUID().uuidString)
++      .appendingPathExtension(isMPEG4 ? "m4a" : "audio")
++    try data.write(to: url)
++    defer { try? FileManager.default.removeItem(at: url) }
++
++    let file: AVAudioFile
++    do {
++      file = try AVAudioFile(forReading: url)
++    } catch {
++      throw BuiltInAIError.notSupported("The audio format is not supported.")
++    }
++    guard
++      let target = AVAudioFormat(
++        commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true),
++      let converter = AVAudioConverter(from: file.processingFormat, to: target),
++      let input = AVAudioPCMBuffer(
++        pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))
++    else {
++      throw BuiltInAIError.operation("The audio could not be converted.")
++    }
++    try file.read(into: input)
++    let frames = Double(input.frameLength) * sampleRate / file.processingFormat.sampleRate
++    guard
++      let output = AVAudioPCMBuffer(
++        pcmFormat: target, frameCapacity: AVAudioFrameCount(frames.rounded(.up)) + 1024)
++    else {
++      throw BuiltInAIError.operation("The audio could not be converted.")
++    }
++    // The converter asks for input until told it has ended. It gets all of it
++    // at once.
++    final class Fed: @unchecked Sendable { var done = false }
++    let fed = Fed()
++    var conversionError: NSError?
++    let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
++      if fed.done {
++        inputStatus.pointee = .endOfStream
++        return nil
++      }
++      fed.done = true
++      inputStatus.pointee = .haveData
++      return input
++    }
++    guard status != .error, let samples = output.int16ChannelData else {
++      throw BuiltInAIError.operation(
++        "The audio could not be converted: \(conversionError?.localizedDescription ?? "")")
++    }
++    let pcm = Data(bytes: samples[0], count: Int(output.frameLength) * 2)
++    return wavHeader(byteCount: pcm.count) + pcm
++  }
++
++  private static func wavHeader(byteCount: Int) -> Data {
++    var header = Data()
++    func append<T: FixedWidthInteger>(_ value: T) {
++      withUnsafeBytes(of: value.littleEndian) { header.append(contentsOf: $0) }
++    }
++    header.append(contentsOf: Array("RIFF".utf8))
++    append(UInt32(36 + byteCount))
++    header.append(contentsOf: Array("WAVEfmt ".utf8))
++    append(UInt32(16))  // Size of the format chunk.
++    append(UInt16(1))  // PCM.
++    append(UInt16(1))  // Mono.
++    append(UInt32(sampleRate))
++    append(UInt32(sampleRate) * 2)  // Bytes per second.
++    append(UInt16(2))  // Bytes per frame.
++    append(UInt16(16))  // Bits per sample.
++    header.append(contentsOf: Array("data".utf8))
++    append(UInt32(byteCount))
++    return header
++  }
++}
++
+ struct GenerationOutput {
+   let text: String
+   let usage: Int
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
