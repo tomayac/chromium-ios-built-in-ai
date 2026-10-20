@@ -1,0 +1,162 @@
+From 9b835e9d8a24274fdaa49b97c94861bfa3d51b3b Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 14:00:35 +0200
+Subject: [PATCH 9/9] [iOS] Sign for sideloading with a free Apple ID
+
+Adds `ios_chrome_sideload_entitlements`, which signs Chrome with the
+increased memory limit as its only capability, the set that AltStore can
+provision for a free Apple ID.
+
+Without extended virtual addressing, the reduced 4 GiB core pools of
+PartitionAlloc still do not fit, so the pool size now halves until the
+pools map, down to the size test processes use. An iPhone 11 Pro Max
+starts with this signing and runs Gemma on the GPU and the CPU.
+---
+ .../partition_address_space.cc                | 23 +++++++++++--------
+ .../partition_alloc/partition_address_space.h |  9 ++++----
+ ios/build/chrome_build.gni                    |  5 ++++
+ ios/chrome/app/BUILD.gn                       |  4 +++-
+ .../resources/Chrome+Sideload.entitlements    | 19 +++++++++++++++
+ 5 files changed, 46 insertions(+), 14 deletions(-)
+ create mode 100644 ios/chrome/app/resources/Chrome+Sideload.entitlements
+
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc
+index 23a26e00d3937..abe3f3a3f4eb7 100644
+--- a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc
++++ b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc
+@@ -107,7 +107,7 @@ size_t PartitionAddressSpace::zero_segment_size_ = 0;
+ #if !PA_BUILDFLAG(IS_IOS)
+ #error Dynamic pool size is only supported on iOS.
+ #endif
+-bool PartitionAddressSpace::is_core_pool_size_reduced_ = false;
++size_t PartitionAddressSpace::core_pool_size_ = 0;
+ 
+ bool PartitionAddressSpace::IsIOSTestProcess() {
+   // On iOS, only applications with the extended virtual addressing entitlement
+@@ -174,13 +174,18 @@ void PartitionAddressSpace::Init() {
+   if (!setup_.regular_pool_base_address_) {
+     // We shouldn't ever fail to map on test processes.
+     PA_CHECK(!IsIOSTestProcess());
+-    // As long as this isn't a test process we should be reducing the size here.
+-    PA_CHECK(core_pool_size > kCorePoolSizeForIOSReducedPoolSize);
+-    is_core_pool_size_reduced_ = true;
+-    core_pool_size = CorePoolSize();
+-    PA_CHECK(core_pool_size == kCorePoolSizeForIOSReducedPoolSize);
+-    glued_pool_sizes = core_pool_size * 2;
+-    setup_.regular_pool_base_address_ = map_base_pages(glued_pool_sizes);
++    // Halve the size until the pools fit, down to what test processes use.
++    // Apps without the extended virtual addressing entitlement, such as ones
++    // sideloaded with a free developer account, need more than one halving.
++    for (size_t size = kCorePoolSizeForIOSReducedPoolSize;
++         !setup_.regular_pool_base_address_ &&
++         size >= kCorePoolSizeForIOSTestProcess;
++         size /= 2) {
++      core_pool_size_ = size;
++      core_pool_size = CorePoolSize();
++      glued_pool_sizes = core_pool_size * 2;
++      setup_.regular_pool_base_address_ = map_base_pages(glued_pool_sizes);
++    }
+     // Nothing to free since we failed originally.
+   }
+ #endif
+@@ -441,7 +446,7 @@ void PartitionAddressSpace::UninitForTesting() {
+   setup_.metadata_region_start_ = kUninitializedPoolBaseAddress;
+ #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+   metadata_region_size_ = 0;
+-  is_core_pool_size_reduced_ = false;
++  core_pool_size_ = 0;
+ #endif  // PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+   for (size_t i = 0; i < kMaxPoolHandle; ++i) {
+     setup_.offsets_to_metadata_[i] = SystemPageSize();
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h
+index 72e86feb6c3ec..e38e5e3361e56 100644
+--- a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h
++++ b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h
+@@ -142,7 +142,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAddressSpace {
+ 
+ #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+   PA_ALWAYS_INLINE static bool IsCorePoolSizeReduced() {
+-    return is_core_pool_size_reduced_;
++    return core_pool_size_ != 0 && core_pool_size_ < kCorePoolSize;
+   }
+ #endif
+ 
+@@ -265,15 +265,16 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAddressSpace {
+ #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+  private:
+   static bool IsIOSTestProcess();
+-  static bool is_core_pool_size_reduced_;
++  // The pool size when it had to be reduced, 0 otherwise.
++  static size_t core_pool_size_;
+ 
+  public:
+   PA_ALWAYS_INLINE static size_t CorePoolSize() {
+     if (IsIOSTestProcess()) {
+       return kCorePoolSizeForIOSTestProcess;
+     }
+-    if (is_core_pool_size_reduced_) {
+-      return kCorePoolSizeForIOSReducedPoolSize;
++    if (core_pool_size_) {
++      return core_pool_size_;
+     }
+     return kCorePoolSize;
+   }
+diff --git a/ios/build/chrome_build.gni b/ios/build/chrome_build.gni
+index 22e5faa591147..43103d0a2055d 100644
+--- a/ios/build/chrome_build.gni
++++ b/ios/build/chrome_build.gni
+@@ -30,6 +30,11 @@ declare_args() {
+   # can be provisioned from scratch through the App Store Connect API.
+   ios_chrome_minimal_entitlements = false
+ 
++  # Signs Chrome with only the entitlements that sideloading tools such as
++  # AltStore can get for a free Apple ID: no app groups, and no extended
++  # virtual addressing, which PartitionAlloc then copes without.
++  ios_chrome_sideload_entitlements = false
++
+   # Enable share extension.
+   ios_enable_share_extension = true
+ 
+diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
+index ece70ffe8426c..bd6690f5e6d6d 100644
+--- a/ios/chrome/app/BUILD.gn
++++ b/ios/chrome/app/BUILD.gn
+@@ -423,7 +423,9 @@ tweak_info_plist("info_plist") {
+ }
+ 
+ compile_entitlements("entitlements") {
+-  if (ios_chrome_minimal_entitlements) {
++  if (ios_chrome_sideload_entitlements) {
++    entitlements_templates = [ "resources/Chrome+Sideload.entitlements" ]
++  } else if (ios_chrome_minimal_entitlements) {
+     entitlements_templates = [ "resources/Chrome+Minimal.entitlements" ]
+   } else {
+     entitlements_templates = [ "resources/Chrome.entitlements" ]
+diff --git a/ios/chrome/app/resources/Chrome+Sideload.entitlements b/ios/chrome/app/resources/Chrome+Sideload.entitlements
+new file mode 100644
+index 0000000000000..4d726a21edac8
+--- /dev/null
++++ b/ios/chrome/app/resources/Chrome+Sideload.entitlements
+@@ -0,0 +1,19 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<!--
++  Copyright 2026 The Chromium Authors
++  Use of this source code is governed by a BSD-style license that can be
++  found in the LICENSE file.
++
++  Used with ios_chrome_sideload_entitlements: what sideloading tools such as
++  AltStore can get for a free Apple ID. The increased memory limit gives the
++  on-device models of the built-in AI APIs room on devices with little RAM.
++-->
++<plist version="1.0">
++<dict>
++	<key>application-identifier</key>
++	<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>
++	<key>com.apple.developer.kernel.increased-memory-limit</key>
++	<true/>
++</dict>
++</plist>
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

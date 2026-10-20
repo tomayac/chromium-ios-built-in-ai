@@ -1,0 +1,293 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install Chromium AI</title>
+    <meta
+      name="description"
+      content="Install Chromium for iOS with the built-in AI APIs through AltStore or SideStore."
+    />
+    <link rel="icon" href="icon.png" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #1f1f1f;
+        --muted: #5f6368;
+        --card: #f1f3f4;
+        --accent: #1a73e8;
+        --accent-fg: #ffffff;
+        --border: #dadce0;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --bg: #131314;
+          --fg: #e3e3e3;
+          --muted: #9aa0a6;
+          --card: #1e1f20;
+          --accent: #8ab4f8;
+          --accent-fg: #131314;
+          --border: #3c4043;
+        }
+      }
+      :root[data-theme='dark'] {
+        --bg: #131314;
+        --fg: #e3e3e3;
+        --muted: #9aa0a6;
+        --card: #1e1f20;
+        --accent: #8ab4f8;
+        --accent-fg: #131314;
+        --border: #3c4043;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        margin: 0;
+        padding: 24px 16px 48px;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      header img {
+        width: 72px;
+        height: 72px;
+        border-radius: 16px;
+      }
+      h1 {
+        font-size: 1.6rem;
+        line-height: 1.2;
+        margin: 0;
+      }
+      header p {
+        margin: 4px 0 0;
+        color: var(--muted);
+      }
+      h2 {
+        font-size: 1.15rem;
+        margin: 32px 0 8px;
+      }
+      .buttons {
+        display: grid;
+        gap: 12px;
+        margin: 24px 0 8px;
+      }
+      .button {
+        display: block;
+        text-align: center;
+        padding: 14px 16px;
+        border-radius: 12px;
+        font-weight: 600;
+        text-decoration: none;
+        background: var(--accent);
+        color: var(--accent-fg);
+      }
+      .button.secondary {
+        background: var(--card);
+        color: var(--fg);
+        border: 1px solid var(--border);
+      }
+      .source {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 8px 8px 8px 12px;
+      }
+      .source code {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-size: 0.85rem;
+      }
+      .source button {
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .small {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      a {
+        color: var(--accent);
+      }
+      ol,
+      ul {
+        padding-left: 1.3em;
+      }
+      li {
+        margin: 6px 0;
+      }
+      .shots {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding-bottom: 8px;
+      }
+      .shots img {
+        height: 360px;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icon.png" alt="" />
+        <div>
+          <h1>Chromium AI</h1>
+          <p>The built-in AI APIs on every page, on your iPhone</p>
+        </div>
+      </header>
+
+      <p>
+        An experimental build of Chromium for iOS where every web page can use
+        <code>LanguageModel</code> (the Prompt API), <code>Summarizer</code>,
+        <code>Writer</code>, <code>Rewriter</code>, <code>Translator</code>, and
+        <code>LanguageDetector</code>. Inference happens on the device: with
+        Apple Foundation Models where the device has Apple Intelligence, and
+        with Gemma 4 E2B everywhere else.
+      </p>
+
+      <div class="buttons">
+        <a class="button" id="altstore" href="#">Add to AltStore</a>
+        <a class="button secondary" id="sidestore" href="#">Add to SideStore</a>
+      </div>
+      <div class="source">
+        <code id="url"></code>
+        <button id="copy" type="button">Copy</button>
+      </div>
+      <p class="small">
+        The buttons open AltStore or SideStore on this iPhone and add the
+        source. In other installers, add the source URL by hand. The
+        <a id="ipa" href="#">.ipa</a> is also available on its own.
+      </p>
+
+      <h2>Installing</h2>
+      <ol>
+        <li>
+          Set up <a href="https://altstore.io">AltStore</a> (with AltServer on a
+          Mac or PC) or <a href="https://sidestore.io">SideStore</a> with your
+          Apple ID. A free Apple ID works.
+        </li>
+        <li>
+          Tap <strong>Add to AltStore</strong> or
+          <strong>Add to SideStore</strong> above.
+        </li>
+        <li>Install <strong>Chromium AI</strong> from the source.</li>
+        <li>
+          Open a page that uses the APIs, such as the
+          <a href="../">test pages</a>.
+        </li>
+      </ol>
+
+      <h2>Things to know</h2>
+      <ul>
+        <li>
+          On devices without Apple Intelligence, the first prompt downloads
+          Gemma 4 E2B: 2.0 GB for text, and 2.6 GB more for image and audio
+          input. Use Wi-Fi. Downloads resume if they stop, and all sites share
+          the files.
+        </li>
+        <li>
+          Apps installed with a free Apple ID stop opening after seven days
+          unless AltStore or SideStore refreshes them. A free Apple ID can have
+          three sideloaded apps at a time.
+        </li>
+        <li>
+          The app asks for the Increased Memory Limit capability, which gives
+          Gemma room on iPhones with 4 GB of memory. AltStore grants it to free
+          Apple IDs. If an installer drops it, larger prompts may make iOS close
+          the app.
+        </li>
+        <li>
+          Text prompts with Apple Foundation Models need iOS 26, and image input
+          needs iOS 27. The app installs from iOS 18, and has been tested on iOS
+          27.
+        </li>
+        <li>
+          This is a personal experiment, and not an official Google or Chromium
+          product. Sign-in, sync, and other Google services are not part of
+          Chromium.
+        </li>
+      </ul>
+
+      <h2>Screenshots</h2>
+      <div class="shots">
+        <img
+          src="screenshot-1.png"
+          alt="The multimodal check with all seven checks passing on an iPhone 11 Pro Max"
+        />
+        <img
+          src="screenshot-2.png"
+          alt="The benchmark page describing an image of a red circle"
+        />
+      </div>
+
+      <h2>Source code</h2>
+      <p>
+        The Chromium patches, the polyfill bundle, and the tools that build this
+        release are on
+        <a href="https://github.com/tomayac/chromium-ios-built-in-ai">GitHub</a
+        >.
+      </p>
+      <p class="small" id="version"></p>
+    </main>
+    <script>
+      const sourceURL = new URL('source.json', location.href).href;
+      const encoded = encodeURIComponent(sourceURL);
+      document.querySelector('#url').textContent = sourceURL;
+      document.querySelector('#altstore').href =
+        `altstore://source?url=${encoded}`;
+      document.querySelector('#sidestore').href =
+        `sidestore://source?url=${encoded}`;
+      document
+        .querySelector('#copy')
+        .addEventListener('click', async (event) => {
+          try {
+            await navigator.clipboard.writeText(sourceURL);
+            event.target.textContent = 'Copied';
+          } catch {
+            getSelection().selectAllChildren(document.querySelector('#url'));
+          }
+        });
+      // The latest release, straight from the source, so the page never lags
+      // behind it.
+      fetch(sourceURL)
+        .then((response) => response.json())
+        .then(({ apps }) => {
+          const [latest] = apps[0].versions;
+          document.querySelector('#ipa').href = latest.downloadURL;
+          const megabytes = Math.round(latest.size / 1e6);
+          document.querySelector('#version').textContent =
+            `Latest: ${latest.version} (${latest.buildVersion}), ` +
+            `${latest.date}, ${megabytes} MB.`;
+        })
+        .catch(() => {});
+    </script>
+  </body>
+</html>

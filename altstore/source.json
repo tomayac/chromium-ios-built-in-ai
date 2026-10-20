@@ -1,0 +1,53 @@
+{
+  "name": "Chromium with Built-in AI",
+  "subtitle": "The built-in AI APIs on iOS, on device",
+  "description": "Chromium for iOS with the built-in AI APIs (Prompt, Summarizer, Writer, Rewriter, Translator, and Language Detector) backed by Apple Foundation Models, or by Gemma 4 on devices without Apple Intelligence.",
+  "iconURL": "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/icon.png",
+  "website": "https://github.com/tomayac/chromium-ios-built-in-ai",
+  "tintColor": "#1A73E8",
+  "apps": [
+    {
+      "name": "Chromium AI",
+      "bundleIdentifier": "com.tomayac.chromium.chrome.ios.dev",
+      "developerName": "Thomas Steiner",
+      "subtitle": "The built-in AI APIs on every page",
+      "localizedDescription": "An experimental build of Chromium for iOS where every web page can use LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, Translator, and LanguageDetector, with inference on the device.\n\nOn devices with Apple Intelligence the APIs use Apple Foundation Models. Elsewhere they use Gemma 4 E2B, downloaded once on first use (2 to 2.6 GB) and shared by all sites.\n\nThis is a personal experiment, and not an official Google or Chromium product.",
+      "iconURL": "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/icon.png",
+      "tintColor": "#1A73E8",
+      "category": "developer",
+      "screenshots": [
+        "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/screenshot-1.png",
+        "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/screenshot-2.png"
+      ],
+      "versions": [
+        {
+          "version": "157.8092.0",
+          "buildVersion": "157.0.8092.0",
+          "date": "2026-10-20",
+          "localizedDescription": "First AltStore release, tested on an iPhone 11 Pro Max, where Gemma runs text prompts on the GPU, and image and audio prompts on the CPU.",
+          "downloadURL": "https://github.com/tomayac/chromium-ios-built-in-ai/releases/download/v157.0.8092.0/Chromium-157.0.8092.0.ipa",
+          "size": 89508422,
+          "minOSVersion": "18.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.developer.kernel.increased-memory-limit"
+        ],
+        "privacy": {
+          "NSBluetoothPeripheralUsageDescription": "This lets you discover relevant web pages based on your surroundings.",
+          "NSCalendarsUsageDescription": "This will be used to create events in your Apple Calendar from Chromium and Google Lens.",
+          "NSCalendarsWriteOnlyAccessUsageDescription": "This will be used to create events in your Apple Calendar from Chromium and Google Lens.",
+          "NSCameraUsageDescription": "This lets you take and upload photos, as well as scan QR codes",
+          "NSContactsUsageDescription": "This will be used to show you possible invitees to your event.",
+          "NSFaceIDUsageDescription": "Chromium keeps your sensitive data secure with Face ID.",
+          "NSLocationWhenInUseUsageDescription": "Chromium shares your location with sites you allow.",
+          "NSMicrophoneUsageDescription": "This lets you search using your voice",
+          "NSPhotoLibraryAddUsageDescription": "This lets you save photos to your photo library.",
+          "NSSpeechRecognitionUsageDescription": "This will let you use your voice with certain features on websites."
+        }
+      }
+    }
+  ],
+  "news": []
+}

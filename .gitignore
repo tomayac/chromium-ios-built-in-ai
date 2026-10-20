@@ -10,3 +10,4 @@ ios-tools/signing.json
 *.p12
 *.mobileprovision
 .claude/
+*.ipa

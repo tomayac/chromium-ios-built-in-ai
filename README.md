@@ -13,6 +13,16 @@ happens on the device:
   for audio input. Each model file is downloaded once into the app's container
   and shared by all origins, and downloads resume where they stopped.
 
+## Installing
+
+Install the app on an iPhone through [AltStore](https://altstore.io) or
+[SideStore](https://sidestore.io), with any Apple ID, free ones included: open
+the [install page](https://tomayac.github.io/chromium-ios-built-in-ai/altstore/)
+on the iPhone and add the source, or add
+`https://tomayac.github.io/chromium-ios-built-in-ai/altstore/source.json` by
+hand. The [test pages](https://tomayac.github.io/chromium-ios-built-in-ai/)
+exercise the APIs.
+
 ## Gemma files and backends
 
 The session's `expectedInputs` decide which Gemma file it needs, and the GPU
@@ -100,7 +110,8 @@ page ── LanguageModel / Summarizer / … (polyfills, page world)
 - `bundle/`: builds the polyfill script that Chromium injects, and a test page
   for the APIs.
 - `ios-tools/`: provisions a device build through the App Store Connect API,
-  with no Xcode UI involved.
+  with no Xcode UI involved, and packages releases for AltStore.
+- `altstore/`: the AltStore source and its install page.
 
 ## Building
 
@@ -200,6 +211,37 @@ since the API cannot enable them: **Extended Virtual Addressing**, without which
 Chromium's allocator cannot start, and **Increased Memory Limit**, which gives
 Gemma room on devices with 4 GB of RAM. Run the script again after enabling
 them, so the profile includes them.
+
+## Releasing for AltStore and SideStore
+
+AltStore and SideStore re-sign apps with the user's Apple ID, which only gets
+the capabilities a free account can have. The `ios_chrome_sideload_entitlements`
+GN arg signs the build with just one of them, **Increased Memory Limit**.
+Without extended virtual addressing, PartitionAlloc shrinks its pools until they
+fit, and Gemma still runs on the GPU and the CPU.
+
+```gn
+target_environment = "device"
+is_debug = false
+dcheck_always_on = false
+symbol_level = 0
+enable_litert_lm = true
+ios_chrome_sideload_entitlements = true
+```
+
+Build it with the signing GN args from above, then package it:
+
+```sh
+ios-tools/make-altstore-release.sh out/ios-sideload/Chromium.app altstore \
+    "What changed in this release."
+gh release create v<build> altstore/Chromium-<build>.ipa
+```
+
+The script signs the app ad hoc, keeping the sideload entitlements and dropping
+the development certificate and the provisioning profile, which lists device
+IDs. It writes the `.ipa` and adds the release to `altstore/source.json`, with
+the entitlements and privacy descriptions AltStore shows before installing.
+Publishing the `altstore/` folder to GitHub Pages updates the source.
 
 ## Updating the polyfills
 
