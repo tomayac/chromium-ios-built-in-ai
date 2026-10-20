@@ -5,7 +5,7 @@
 // runs open test pages with `?v=<seconds since the epoch>`; a browser that
 // restores its tabs on launch loads them again with that old value, and they
 // must not run their tests again then. Pages opened without `v` always run.
-export function isRestoredRun(maxAgeSeconds = 120) {
+export function isRestoredRun(maxAgeSeconds = 45) {
   const v = Number(new URLSearchParams(location.search).get('v'));
   return Boolean(v) && Date.now() / 1000 - v > maxAgeSeconds;
 }
