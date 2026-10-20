@@ -1,0 +1,345 @@
+From 48ab4c05eb49d049d2c359bb808052e3cec7eefa Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 09:54:51 +0200
+Subject: [PATCH 3/3] [iOS] Fix cut-off Gemma answers, and resume model
+ downloads
+
+Gemma stopped free-form answers after a few dozen tokens whenever the
+conversation had constrained decoding enabled, which it always had.
+Conversations now enable it only for turns with a response constraint,
+and are reused only for turns of the same kind.
+
+The Gemma download now survives interruptions, the app being killed
+among them. Bytes go to a `.partial` file whose ETag and size are kept
+next to it, and the next attempt asks for the rest with `Range` and
+`If-Range`, starting over if the file changed on the server. Failed
+attempts are retried with backoff, and the download checks for free
+space first.
+
+The minimal entitlements get extended virtual addressing back, which
+PartitionAlloc needs to start, and the increased memory limit.
+---
+ .../app/resources/Chrome+Minimal.entitlements |   7 +-
+ .../model/built_in_ai_engine.swift            | 254 ++++++++++++++++--
+ 2 files changed, 242 insertions(+), 19 deletions(-)
+
+diff --git a/ios/chrome/app/resources/Chrome+Minimal.entitlements b/ios/chrome/app/resources/Chrome+Minimal.entitlements
+index 7660f4099f124..649fa86c11d82 100644
+--- a/ios/chrome/app/resources/Chrome+Minimal.entitlements
++++ b/ios/chrome/app/resources/Chrome+Minimal.entitlements
+@@ -5,8 +5,11 @@
+   Use of this source code is governed by a BSD-style license that can be
+   found in the LICENSE file.
+ 
+-  Used with ios_chrome_minimal_entitlements. The memory entitlements give the
+-  on-device models of the built-in AI APIs room on devices with little RAM.
++  Used with ios_chrome_minimal_entitlements. PartitionAlloc cannot reserve its
++  pools without extended virtual addressing, and the on-device models of the
++  built-in AI APIs need the increased memory limit on devices with little RAM.
++  Enable both capabilities on the App ID in the developer portal; the App
++  Store Connect API cannot.
+ -->
+ <plist version="1.0">
+ <dict>
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 8c3c890b7c576..6546e5d17127d 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -746,7 +746,12 @@ final class AISession: @unchecked Sendable {
+       guard let last = messages.popLast(), last.role == .user else {
+         throw BuiltInAIError.syntax("The conversation must end with a user message.")
+       }
+-      let history = messages.map(\.fingerprint)
++      // Constrained decoding is a property of the whole conversation, and
++      // turning it on cuts Gemma's free-form answers short. So only turns with
++      // a schema get it, and a conversation is reused only for the same kind of
++      // turn.
++      let structured = schema != nil
++      let history = ["format:\(structured)"] + messages.map(\.fingerprint)
+ 
+       let conversation: Conversation
+       if let reused = takeCached(matching: history) as? Conversation, reused.isAlive {
+@@ -758,9 +763,9 @@ final class AISession: @unchecked Sendable {
+           with: ConversationConfig(
+             systemMessage: system.isEmpty ? nil : Message(system, role: .system),
+             initialMessages: messages.map(Self.liteRTMessage),
+-            samplerConfig: try liteRTSampler(structured: schema != nil),
++            samplerConfig: try liteRTSampler(structured: structured),
+             thinkingConfig: ThinkingConfig(enableThinking: false),
+-            enableResponseFormat: true))
++            enableResponseFormat: structured))
+       }
+ 
+       var prompt = Self.liteRTMessage(last)
+@@ -1133,23 +1138,40 @@ final class GemmaModelStore: @unchecked Sendable {
+     listeners.forEach { $0(value) }
+   }
+ 
++  /// Downloads the model, resuming whatever an earlier attempt left behind,
++  /// and retrying a few times when the network fails.
+   private func fetch() async throws {
+     defer { lock.withLock { download = nil } }
+     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+-    let delegate = DownloadDelegate { [weak self] in self?.report($0) }
+-    let (temporary, response) = try await URLSession.shared.download(
+-      from: Self.remoteURL, delegate: delegate)
+-    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+-      throw BuiltInAIError.network("The model download failed.")
++    let download = ResumableDownload(
++      url: Self.remoteURL, destination: modelURL,
++      onProgress: { [weak self] in self?.report($0) })
++    var attempt = 0
++    while true {
++      do {
++        try await download.run()
++        break
++      } catch let error as BuiltInAIError {
++        throw error
++      } catch {
++        attempt += 1
++        if attempt >= Self.maximumDownloadAttempts || Task.isCancelled {
++          throw BuiltInAIError.network(
++            "The model download failed: \(error.localizedDescription)")
++        }
++        // 2, 4, 8, 16 seconds. What arrived so far is kept.
++        try await Task.sleep(nanoseconds: UInt64(1 << attempt) * 1_000_000_000)
++      }
+     }
+-    var destination = modelURL
+-    try? FileManager.default.removeItem(at: destination)
+-    try FileManager.default.moveItem(at: temporary, to: destination)
+     // Re-downloadable, so keep it out of device backups.
++    var destination = modelURL
+     var values = URLResourceValues()
+     values.isExcludedFromBackup = true
+     try? destination.setResourceValues(values)
+   }
++
++  /// Attempts per download before giving up. Each one resumes the last.
++  static let maximumDownloadAttempts = 5
+ }
+ 
+ #if canImport(LiteRTLM)
+@@ -1225,15 +1247,213 @@ final class GemmaModelStore: @unchecked Sendable {
+   }
+ #endif
+ 
+-private final class DownloadDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
++/// Downloads one large file in a way that survives being interrupted, even
++/// by the app being killed.
++///
++/// Bytes go straight into `<destination>.partial`. Next to it,
++/// `<destination>.partial.json` records the server's ETag and the total size,
++/// so a later attempt asks only for the rest (`Range`), and only if the file
++/// on the server is still the same one (`If-Range`). Otherwise the server
++/// sends all of it, and the download starts over. The finished file is moved
++/// into place once its size matches.
++final class ResumableDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
++  private struct State: Codable {
++    var etag: String?
++    var total: Int64
++  }
++
++  private let url: URL
++  private let destination: URL
++  private let partial: URL
++  private let stateFile: URL
+   private let onProgress: @Sendable (Double) -> Void
+-  private var observation: NSKeyValueObservation?
+ 
+-  init(onProgress: @escaping @Sendable (Double) -> Void) { self.onProgress = onProgress }
++  // Only touched on the session's delegate queue, one attempt at a time.
++  private var file: FileHandle?
++  private var received: Int64 = 0
++  private var state = State(etag: nil, total: 0)
++  private var lastReported = -1.0
++  private var failure: Error?
++  private var continuation: CheckedContinuation<Void, Error>?
++
++  init(url: URL, destination: URL, onProgress: @escaping @Sendable (Double) -> Void) {
++    self.url = url
++    self.destination = destination
++    self.partial = destination.appendingPathExtension("partial")
++    self.stateFile = destination.appendingPathExtension("partial.json")
++    self.onProgress = onProgress
++  }
++
++  /// One attempt. Throws when it is interrupted, leaving what arrived for the
++  /// next attempt.
++  func run() async throws {
++    var request = URLRequest(url: url)
++    request.cachePolicy = .reloadIgnoringLocalCacheData
++    let resumable = loadState()
++    if let resumable {
++      request.setValue("bytes=\(received)-", forHTTPHeaderField: "Range")
++      if let etag = resumable.etag {
++        request.setValue(etag, forHTTPHeaderField: "If-Range")
++      }
++    }
++    let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
++    defer { session.finishTasksAndInvalidate() }
++    let task = session.dataTask(with: request)
++    try await withTaskCancellationHandler {
++      try await withCheckedThrowingContinuation { continuation in
++        self.continuation = continuation
++        task.resume()
++      }
++    } onCancel: {
++      task.cancel()
++    }
++  }
++
++  /// Picks up the partial file of an earlier attempt, if there is one to pick
++  /// up. Returns its state, or nil to start from scratch.
++  private func loadState() -> State? {
++    let fileManager = FileManager.default
++    guard let data = try? Data(contentsOf: stateFile),
++      let saved = try? JSONDecoder().decode(State.self, from: data),
++      let size = (try? fileManager.attributesOfItem(atPath: partial.path))?[.size] as? Int64,
++      size > 0, size < saved.total
++    else {
++      try? fileManager.removeItem(at: partial)
++      try? fileManager.removeItem(at: stateFile)
++      received = 0
++      return nil
++    }
++    state = saved
++    received = size
++    return saved
++  }
++
++  private func saveState() {
++    if let data = try? JSONEncoder().encode(state) {
++      try? data.write(to: stateFile, options: .atomic)
++    }
++  }
++
++  private func finish(_ error: Error?) {
++    try? file?.close()
++    file = nil
++    let continuation = self.continuation
++    self.continuation = nil
++    if let error {
++      continuation?.resume(throwing: error)
++    } else {
++      continuation?.resume()
++    }
++  }
++
++  // MARK: URLSessionDataDelegate
++
++  func urlSession(
++    _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
++    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
++  ) {
++    guard let http = response as? HTTPURLResponse else {
++      failure = BuiltInAIError.network("The model download got no HTTP response.")
++      completionHandler(.cancel)
++      return
++    }
++    do {
++      switch http.statusCode {
++      case 206:
++        // The rest of the same file. "Content-Range: bytes <from>-<to>/<total>"
++        let range = http.value(forHTTPHeaderField: "Content-Range") ?? ""
++        guard range.hasPrefix("bytes \(received)-"),
++          let total = Int64(range.split(separator: "/").last ?? "")
++        else {
++          // Not where we left off. Start over on the next attempt.
++          try? FileManager.default.removeItem(at: stateFile)
++          throw URLError(.cannotParseResponse)
++        }
++        state.total = total
++      case 200:
++        // All of it: a first attempt, or the file changed on the server.
++        received = 0
++        state = State(
++          etag: http.value(forHTTPHeaderField: "ETag"), total: http.expectedContentLength)
++        FileManager.default.createFile(atPath: partial.path, contents: nil)
++        if state.total > 0 {
++          try ensureSpace(for: state.total)
++          saveState()
++        } else {
++          // Sent without a length, compressed on the fly for instance, so it
++          // can be neither checked nor resumed. It still downloads.
++          try? FileManager.default.removeItem(at: stateFile)
++        }
++      default:
++        throw BuiltInAIError.network("The model download failed with HTTP \(http.statusCode).")
++      }
++      let handle = try FileHandle(forWritingTo: partial)
++      try handle.truncate(atOffset: UInt64(received))
++      try handle.seekToEnd()
++      file = handle
++      report()
++      completionHandler(.allow)
++    } catch {
++      failure = error
++      completionHandler(.cancel)
++    }
++  }
++
++  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
++    guard let file else { return }
++    do {
++      try file.write(contentsOf: data)
++      received += Int64(data.count)
++      report()
++    } catch {
++      failure = error
++      dataTask.cancel()
++    }
++  }
++
++  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
++    if let error = failure ?? error {
++      failure = nil
++      finish(error)
++      return
++    }
++    do {
++      try file?.synchronize()
++      guard state.total <= 0 || received == state.total else {
++        throw URLError(.networkConnectionLost)
++      }
++      let fileManager = FileManager.default
++      try? fileManager.removeItem(at: destination)
++      try fileManager.moveItem(at: partial, to: destination)
++      try? fileManager.removeItem(at: stateFile)
++      finish(nil)
++    } catch {
++      finish(error)
++    }
++  }
++
++  /// Reports progress in steps of a tenth of a percent at most.
++  private func report() {
++    guard state.total > 0 else { return }
++    let fraction = Double(received) / Double(state.total)
++    if fraction - lastReported >= 0.001 || fraction >= 1 {
++      lastReported = fraction
++      onProgress(min(fraction, 1))
++    }
++  }
+ 
+-  func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+-    observation = task.progress.observe(\.fractionCompleted) { [onProgress] progress, _ in
+-      onProgress(progress.fractionCompleted)
++  private func ensureSpace(for total: Int64) throws {
++    // Space for important use counts what the system would free up, and is 0
++    // on volumes that do not track it, such as external ones on a Mac.
++    let values = try? destination.deletingLastPathComponent().resourceValues(
++      forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
++    let important = values?.volumeAvailableCapacityForImportantUsage ?? 0
++    let plain = Int64(values?.volumeAvailableCapacity ?? 0)
++    let available = max(important, plain)
++    if available > 0, available < total + 500_000_000 {
++      throw BuiltInAIError(
++        name: "QuotaExceededError",
++        message: "The model needs \(total / 1_000_000) MB of free space.")
+     }
+   }
+ }
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
