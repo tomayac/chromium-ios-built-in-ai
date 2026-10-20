@@ -35,6 +35,7 @@ import tempfile
 import time
 
 import asc_provision as asc_lib
+import rebrand_strings
 from asc_provision import AppStoreConnect, run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -137,6 +138,7 @@ def package(app_path, identity, profile, bundle_identifier, build_number,
     for pseudo in ('ar_XB.lproj', 'en_XA.lproj'):
       shutil.rmtree(os.path.join(copy, pseudo), ignore_errors=True)
     shutil.copy(PRIVACY_MANIFEST, os.path.join(copy, 'PrivacyInfo.xcprivacy'))
+    rebrand_strings.rebrand_app(copy)
     shutil.copy(profile, os.path.join(copy, 'embedded.mobileprovision'))
 
     entitlements = os.path.join(work, 'entitlements.plist')
@@ -155,7 +157,7 @@ def package(app_path, identity, profile, bundle_identifier, build_number,
         '--entitlements', entitlements, copy)
     run('codesign', '--verify', '--deep', '--strict', copy)
 
-    ipa = os.path.join(out_dir, f'Chromium-{build_number}.ipa')
+    ipa = os.path.join(out_dir, f'BuiltInAIBrowser-{build_number}.ipa')
     if os.path.exists(ipa):
       os.remove(ipa)
     subprocess.run(['zip', '-qry', ipa, 'Payload'], cwd=work, check=True)
@@ -277,8 +279,18 @@ def release(asc, app, build, config, notes):
   asc.post(f'/betaGroups/{group["id"]}/relationships/builds',
            {'data': [{'type': 'builds', 'id': build}]})
 
+  # Beta App Review takes one build at a time.
+  builds = [b['id'] for b in asc.get(f'/builds?filter[app]={app}&limit=50')['data']]
+  in_review = [
+      s for s in asc.get('/betaAppReviewSubmissions?filter[build]=' +
+                         ','.join(builds))['data']
+      if s['attributes']['betaReviewState'] in ('WAITING_FOR_REVIEW', 'IN_REVIEW')
+  ]
   status = asc.get(f'/builds/{build}/betaAppReviewSubmission')
-  if not status.get('data'):
+  if not status.get('data') and in_review:
+    print('Another build is in Beta App Review. Once it is done, submit this one '
+          'with --skip-upload and --release.')
+  elif not status.get('data'):
     asc.post('/betaAppReviewSubmissions', {
         'data': {'type': 'betaAppReviewSubmissions',
                  'relationships': {'build': {'data': {'type': 'builds',

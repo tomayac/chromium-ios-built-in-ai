@@ -59,7 +59,12 @@ on its own. Gemma runs in the browser, which manages it:
   history the polyfill sends with every turn.
 - GPU turns wait for the foreground, since iOS does not let background apps use
   the GPU. A GPU turn running as the browser goes to the background stops, and
-  runs again in the foreground unless part of its answer reached the page.
+  goes on in the foreground where it stopped, so the page gets one answer. The
+  browser renders the conversation in Gemma's prompt format with the model's
+  turn left open after the partial answer, and decodes from there in a LiteRT-LM
+  session without a template of its own. Conversations with images or audio, and
+  turns with a response schema, run again from scratch, as long as the page has
+  none of their answer yet.
 
 `bundle/test/multimodal.html` checks image and audio input with answers that are
 easy to verify: a canvas and a PNG `Blob` as images, a WAV `Blob` and an
@@ -254,6 +259,10 @@ the development certificate and the provisioning profile, which lists device
 IDs. It writes the `.ipa` and adds the release to `altstore/source.json`, with
 the entitlements and privacy descriptions AltStore shows before installing.
 Publishing the `altstore/` folder to GitHub Pages updates the source.
+
+Both release scripts run `ios-tools/rebrand_strings.py`, which puts the app's
+display name in place of "Chromium" in the permission texts of every language,
+such as the camera and location prompts.
 
 ## Releasing on TestFlight
 

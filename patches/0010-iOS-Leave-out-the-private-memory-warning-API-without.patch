@@ -1,7 +1,7 @@
 From da2b3597ce5dbbd63db78a0b55807e4bb2198d02 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 16:08:11 +0200
-Subject: [PATCH 10/11] [iOS] Leave out the private memory warning API without
+Subject: [PATCH 10/12] [iOS] Leave out the private memory warning API without
  memory debugging
 
 The memory debugger triggers memory warnings with UIKit's private

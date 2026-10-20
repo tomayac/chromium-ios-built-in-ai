@@ -1,5 +1,5 @@
 {
-  "description": "Chromium for iOS with the built-in AI APIs (LanguageModel, Summarizer, Writer, Rewriter, Translator, and LanguageDetector) on every web page, backed by Apple Foundation Models or by Gemma 4 on devices without Apple Intelligence. Try the test pages at https://tomayac.github.io/chromium-ios-built-in-ai/.",
+  "description": "A web browser for iOS with the built-in AI APIs (LanguageModel, Summarizer, Writer, Rewriter, Translator, and LanguageDetector) on every web page, backed by Apple Foundation Models or by Gemma 4 on devices without Apple Intelligence. Try the test pages at https://tomayac.github.io/chromium-ios-built-in-ai/.",
   "feedbackEmail": "you@example.com",
   "privacyPolicyUrl": "https://tomayac.github.io/chromium-ios-built-in-ai/privacy.html",
   "marketingUrl": "https://github.com/tomayac/chromium-ios-built-in-ai",

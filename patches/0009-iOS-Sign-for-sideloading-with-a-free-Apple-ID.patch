@@ -1,7 +1,7 @@
 From 9b835e9d8a24274fdaa49b97c94861bfa3d51b3b Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 14:00:35 +0200
-Subject: [PATCH 09/11] [iOS] Sign for sideloading with a free Apple ID
+Subject: [PATCH 09/12] [iOS] Sign for sideloading with a free Apple ID
 
 Adds `ios_chrome_sideload_entitlements`, which signs Chrome with the
 increased memory limit as its only capability, the set that AltStore can

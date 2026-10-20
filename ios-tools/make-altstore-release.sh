@@ -7,7 +7,7 @@
 #
 #   ios-tools/make-altstore-release.sh <Chromium.app> <out dir> [release notes]
 #
-# Writes <out dir>/Chromium-<version>-<build>.ipa and updates
+# Writes <out dir>/BuiltInAIBrowser-<build>.ipa and updates
 # <out dir>/source.json, which lists the release under the download URL that
 # `RELEASE_URL_BASE` names, a GitHub release by default.
 #
@@ -29,7 +29,7 @@ VERSION=$(plist CFBundleShortVersionString "$APP/Info.plist")
 BUILD=$(plist CFBundleVersion "$APP/Info.plist")
 TAG="v$BUILD"
 RELEASE_URL_BASE=${RELEASE_URL_BASE:-https://github.com/$REPO/releases/download/$TAG}
-IPA_NAME="Chromium-$BUILD.ipa"
+IPA_NAME="BuiltInAIBrowser-$BUILD.ipa"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -50,6 +50,7 @@ plistlib.dump(entitlements, open(sys.argv[2], 'wb'))
 print('Entitlements:', ', '.join(sorted(entitlements)) or 'none')
 EOF
 
+python3 "$(dirname "$0")/rebrand_strings.py" "$APP_COPY"
 rm -f "$APP_COPY/embedded.mobileprovision"
 # Inside out: nested code first, the app last.
 find "$APP_COPY" -depth \( -name '*.framework' -o -name '*.dylib' -o -name '*.appex' \) \
@@ -89,7 +90,7 @@ else:
         'name': 'Built-In AI Browser',
         'subtitle': 'The built-in AI APIs on iOS, on device',
         'description': (
-            'Chromium for iOS with the built-in AI APIs (Prompt, Summarizer, '
+            'A web browser for iOS with the built-in AI APIs (Prompt, Summarizer, '
             'Writer, Rewriter, Translator, and Language Detector) backed by '
             'Apple Foundation Models, or by Gemma 4 on devices without Apple '
             'Intelligence.'),
@@ -109,15 +110,15 @@ else:
         'developerName': 'Thomas Steiner',
         'subtitle': 'The built-in AI APIs on every page',
         'localizedDescription': (
-            'An experimental web browser, built from Chromium for iOS, where every '
+            'An experimental web browser for iOS where every '
             'web page can '
             'use LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, '
             'Translator, and LanguageDetector, with inference on the device.\n\n'
             'On devices with Apple Intelligence the APIs use Apple Foundation '
             'Models. Elsewhere they use Gemma 4 E2B, downloaded once on first '
             'use (2 to 2.6 GB) and shared by all sites.\n\n'
-            'This is a personal experiment, and not an official Google or '
-            'Chromium product.'),
+            'This is a personal experiment, and not an official Google '
+            'product.'),
         'iconURL': f'{pages}/icon.png',
         'tintColor': '#1A73E8',
         'category': 'developer',
