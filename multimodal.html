@@ -1,0 +1,191 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Multimodal Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --pass: #188038;
+        --fail: #c5221f;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td {
+        border-top: 1px solid #8884;
+        padding: 6px 4px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      td:first-child {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .pass {
+        color: var(--pass);
+      }
+      .fail {
+        color: var(--fail);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Multimodal Check</h1>
+    <table>
+      <tbody id="results"></tbody>
+    </table>
+    <script type="module">
+      // Image and audio input with answers that are easy to check, through the
+      // input types the polyfill converts differently.
+      const results = document.querySelector('#results');
+      const rows = [];
+      const row = (name, ok, detail) => {
+        const tr = results.insertRow();
+        tr.insertCell().textContent = `${ok ? 'PASS' : 'FAIL'} ${name}`;
+        tr.insertCell().textContent = detail;
+        tr.className = ok ? 'pass' : 'fail';
+        rows.push({ check: tr.cells[0].textContent, detail });
+      };
+
+      // Runs `fn`, which returns the answer, and passes when `expect` matches.
+      const check = async (name, fn, expect) => {
+        const started = performance.now();
+        try {
+          const answer = (await fn()).trim();
+          const ms = Math.round(performance.now() - started);
+          row(name, expect.test(answer), `${answer} (${ms} ms)`);
+        } catch (error) {
+          row(name, false, `${error.name}: ${error.message}`);
+        }
+      };
+
+      const canvas = (draw) => {
+        const c = document.createElement('canvas');
+        c.width = c.height = 256;
+        const context = c.getContext('2d');
+        context.fillStyle = 'white';
+        context.fillRect(0, 0, 256, 256);
+        draw(context);
+        return c;
+      };
+      const circle = canvas((context) => {
+        context.fillStyle = 'red';
+        context.beginPath();
+        context.arc(128, 128, 80, 0, 2 * Math.PI);
+        context.fill();
+      });
+      const text = canvas((context) => {
+        context.fillStyle = 'black';
+        context.font = 'bold 64px sans-serif';
+        context.textAlign = 'center';
+        context.fillText('CAT 42', 128, 150);
+      });
+      const textBlob = await new Promise((resolve) =>
+        text.toBlob(resolve, 'image/png')
+      );
+      const speechBlob = await (await fetch('speech.wav')).blob();
+      const speechBuffer = await new AudioContext().decodeAudioData(
+        await speechBlob.arrayBuffer()
+      );
+
+      const ask = (session, value, type, question) =>
+        session.prompt([
+          {
+            role: 'user',
+            content: [
+              { type: 'text', value: question },
+              { type, value },
+            ],
+          },
+        ]);
+
+      const imageOptions = { expectedInputs: [{ type: 'text' }, { type: 'image' }] };
+      const audioOptions = { expectedInputs: [{ type: 'text' }, { type: 'audio' }] };
+
+      await check(
+        'availability (image)',
+        () => LanguageModel.availability(imageOptions),
+        /available|downloadable/
+      );
+      await check(
+        'availability (audio)',
+        () => LanguageModel.availability(audioOptions),
+        /available|downloadable/
+      );
+
+      const image = await LanguageModel.create(imageOptions);
+      await check(
+        'image: canvas',
+        () => ask(image, circle, 'image',
+          'What color is the shape in this image? One word.'),
+        /red/i
+      );
+      const imageAgain = await LanguageModel.create(imageOptions);
+      await check(
+        'image: PNG blob',
+        () => ask(imageAgain, textBlob, 'image',
+          'What text is written in this image? Reply with the text only.'),
+        /cat\s*42/i
+      );
+
+      const audio = await LanguageModel.create(audioOptions);
+      await check(
+        'audio: WAV blob',
+        () => ask(audio, speechBlob, 'audio',
+          'Transcribe this audio. Reply with the transcription only.'),
+        /quick brown fox/i
+      );
+      const audioAgain = await LanguageModel.create(audioOptions);
+      await check(
+        'audio: AudioBuffer',
+        () => ask(audioAgain, speechBuffer, 'audio',
+          'Transcribe this audio. Reply with the transcription only.'),
+        /quick brown fox/i
+      );
+
+      const both = await LanguageModel.create({
+        expectedInputs: [{ type: 'text' }, { type: 'image' }, { type: 'audio' }],
+      });
+      await check(
+        'image and audio together',
+        () =>
+          both.prompt([
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  value:
+                    'Name the animal written in the image and the animal ' +
+                    'that jumps in the audio. Reply as: image=<animal>, audio=<animal>',
+                },
+                { type: 'image', value: textBlob },
+                { type: 'audio', value: speechBlob },
+              ],
+            },
+          ]),
+        /cat[\s\S]*fox/i
+      );
+
+      document.title = 'Multimodal Check: done';
+      fetch('/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ env: navigator.userAgent, rows }),
+      }).catch(() => {});
+    </script>
+  </body>
+</html>
