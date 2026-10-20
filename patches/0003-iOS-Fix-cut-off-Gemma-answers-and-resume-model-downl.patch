@@ -1,7 +1,7 @@
 From 48ab4c05eb49d049d2c359bb808052e3cec7eefa Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 09:54:51 +0200
-Subject: [PATCH 3/7] [iOS] Fix cut-off Gemma answers, and resume model
+Subject: [PATCH 3/8] [iOS] Fix cut-off Gemma answers, and resume model
  downloads
 
 Gemma stopped free-form answers after a few dozen tokens whenever the

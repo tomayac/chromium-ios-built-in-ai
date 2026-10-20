@@ -1,0 +1,117 @@
+From 35d4e2aeb1dadec55d18984e5f0e2ef31929be73 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 13:21:24 +0200
+Subject: [PATCH 8/8] [iOS] Prefer Gemma turns for the loaded engine
+
+The turn queue now runs waiting turns for the engine that is loaded
+first, and holds for 300 ms when only turns for another engine wait,
+since a page asks its next question a moment after its last answer. No
+turn waits longer than 8 seconds because of it.
+
+With the session compacting demo and a page alternating text and image
+sessions open together on an iPhone 11 Pro Max, the engines load 11
+times for 46 turns, down from 13, which is the minimum for that
+workload with one engine at a time.
+---
+ .../model/built_in_ai_engine.swift            | 65 ++++++++++++++++---
+ 1 file changed, 57 insertions(+), 8 deletions(-)
+
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 7f45d616917b5..7766c92dc27fc 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -770,7 +770,7 @@ final class AISession: @unchecked Sendable {
+       // One Gemma turn at a time in the whole browser: the CPU and the GPU
+       // gain nothing from two, and an engine being replaced is then idle and
+       // really goes before the next one loads.
+-      await runtime.turns.acquire()
++      await runtime.turns.acquire(for: plan)
+       defer { Task { await runtime.turns.release() } }
+ 
+       // iOS does not let apps use the GPU in the background. Turns wait for
+@@ -1447,26 +1447,75 @@ final class DeliveryFlag: @unchecked Sendable {
+ }
+ 
+ #if canImport(LiteRTLM)
+-  /// Serializes work, first come, first served.
++  /// Lets one Gemma turn run at a time, preferring turns for the engine that
++  /// is loaded, so that pages needing different engines do not make it reload
++  /// on every turn.
++  ///
++  /// When a turn ends and only turns for another engine wait, the gate holds
++  /// for `linger`, since a page asks its next question a moment after its
++  /// last answer. No turn waits longer than `maximumWait` because of this:
++  /// after that, the longest waiting turn goes first.
+   actor TurnGate {
++    static let linger: UInt64 = 300_000_000
++    static let maximumWait: TimeInterval = 8
++
++    private struct Waiter {
++      let plan: GemmaPlan
++      let since: Date
++      let continuation: CheckedContinuation<Void, Never>
++    }
++
+     private var busy = false
+-    private var waiters: [CheckedContinuation<Void, Never>] = []
++    private var waiters: [Waiter] = []
++    private var lastPlan: GemmaPlan?
++    private var lingerGeneration = 0
+ 
+-    func acquire() async {
++    func acquire(for plan: GemmaPlan) async {
+       guard busy else {
+         busy = true
++        lastPlan = plan
+         return
+       }
+-      await withCheckedContinuation { waiters.append($0) }
++      await withCheckedContinuation {
++        waiters.append(Waiter(plan: plan, since: Date(), continuation: $0))
++      }
+     }
+ 
+     func release() {
+-      if waiters.isEmpty {
++      guard !waiters.isEmpty else {
+         busy = false
+-      } else {
+-        waiters.removeFirst().resume()
++        return
++      }
++      if let next = nextWaiter() {
++        grant(next)
++        return
++      }
++      // Only turns for another engine wait. Give the loaded one a moment.
++      lingerGeneration += 1
++      let generation = lingerGeneration
++      Task {
++        try? await Task.sleep(nanoseconds: Self.linger)
++        self.endLinger(generation)
+       }
+     }
++
++    private func endLinger(_ generation: Int) {
++      guard generation == lingerGeneration, !waiters.isEmpty else { return }
++      grant(nextWaiter() ?? 0)
++    }
++
++    /// The waiter to run now: one that waited too long already, else one for
++    /// the loaded engine. Nil when the others should wait a moment.
++    private func nextWaiter() -> Int? {
++      if Date().timeIntervalSince(waiters[0].since) >= Self.maximumWait { return 0 }
++      return waiters.firstIndex { $0.plan == lastPlan }
++    }
++
++    private func grant(_ index: Int) {
++      let waiter = waiters.remove(at: index)
++      lastPlan = waiter.plan
++      waiter.continuation.resume()
++    }
+   }
+ 
+   /// The loaded Gemma engines, and when they go.
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
