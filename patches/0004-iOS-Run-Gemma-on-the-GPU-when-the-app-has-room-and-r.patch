@@ -1,0 +1,254 @@
+From f542041feffd365c2892a7f14a0e79b549fd5fb0 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 10:12:17 +0200
+Subject: [PATCH 4/4] [iOS] Run Gemma on the GPU when the app has room, and
+ record its speed
+
+Picks the GPU whenever loading the model there leaves the app at least
+1.5 GB from its memory limit, and the CPU otherwise, in place of a fixed
+6 GB of device memory. On an iPhone 11 Pro Max (4 GB), the GPU decodes
+at 22 tokens per second against 14 on the CPU, and answers its first
+token in 0.5 s against 2.3 s, at 1.2 GB of footprint against 0.6 GB.
+
+Developer launch arguments pick the backend and the CPU thread count
+(-BuiltInAIGemmaBackend, -BuiltInAIGemmaThreads), and keep the device
+awake while Chrome is in front (-BuiltInAIKeepAwake). After every
+answer, Gemma's speed and the app's memory footprint go to
+Library/Caches/BuiltInAI/stats.jsonl.
+---
+ .../model/built_in_ai_engine.swift            | 122 +++++++++++++++++-
+ .../model/built_in_ai_java_script_feature.h   |   4 +
+ .../model/built_in_ai_java_script_feature.mm  |  13 ++
+ 3 files changed, 135 insertions(+), 4 deletions(-)
+
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 6546e5d17127d..10bf1587aa647 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -782,11 +782,18 @@ final class AISession: @unchecked Sendable {
+       }
+ 
+       var text = ""
++      let started = Date()
++      var firstChunk: Date?
++      var lastChunk = started
++      var chunks = 0
+       try await withTaskCancellationHandler {
+         for try await chunk in conversation.sendMessageStream(prompt, responseFormat: format) {
+           try Task.checkCancellation()
+           let delta = chunk.toString
+           if delta.isEmpty { continue }
++          chunks += 1
++          lastChunk = Date()
++          if firstChunk == nil { firstChunk = lastChunk }
+           text += delta
+           // JSON goes out whole, like Apple's, once it is complete.
+           if format == nil { onChunk?(delta) }
+@@ -802,6 +809,9 @@ final class AISession: @unchecked Sendable {
+           last.fingerprint, ChatMessage(role: .model, parts: [.text(text)]).fingerprint,
+         ])
+       let usage = (try? conversation.getTokenCount()) ?? (text.count + 3) / 4
++      GemmaStats.record(
++        started: started, firstChunk: firstChunk, lastChunk: lastChunk, chunks: chunks,
++        contextTokens: usage)
+       return GenerationOutput(text: text, usage: usage)
+     }
+ 
+@@ -1048,9 +1058,11 @@ final class GemmaModelStore: @unchecked Sendable {
+   )!
+   /// Context window for Gemma sessions. The KV cache grows with it.
+   static let contextWindow = 4096
+-  /// Gemma 4 E2B runs in about 0.6 GB on the CPU and 1.5 GB on the GPU, on top
+-  /// of its memory-mapped embeddings. 4 GB devices use the CPU.
++  /// Gemma 4 E2B takes about 0.6 GB of footprint on the CPU and 1.2 GB on the
++  /// GPU, on top of its memory-mapped embeddings.
+   static let minimumPhysicalMemory: UInt64 = 3_500_000_000
++  /// Where there is no per-app memory limit to ask (macOS), the device size
++  /// from which the GPU is used.
+   static let gpuPhysicalMemory: UInt64 = 6_000_000_000
+ 
+   enum State {
+@@ -1184,6 +1196,9 @@ final class GemmaModelStore: @unchecked Sendable {
+     static let idleUnloadDelay: UInt64 = 60_000_000_000
+ 
+     private var loading: Task<Engine, Error>?
++
++    /// The backend the loaded model runs on, for the stats.
++    nonisolated(unsafe) static var loadedBackend: Backend?
+     private var users = 0
+     private var generation = 0
+ 
+@@ -1230,9 +1245,45 @@ final class GemmaModelStore: @unchecked Sendable {
+       }
+     }
+ 
++    /// The backend the model runs on: the GPU whenever the app has the memory
++    /// for it, the CPU otherwise. Developers can override it with launch
++    /// arguments, `-BuiltInAIGemmaBackend cpu|gpu|auto` and
++    /// `-BuiltInAIGemmaThreads <n>`, which end up in the argument domain of the
++    /// user defaults.
++    ///
++    /// On an iPhone 11 Pro Max (4 GB), the GPU decodes at 22 tokens per second
++    /// and answers its first token in 0.5 s, the CPU at 14 and in 2.3 s. The
++    /// GPU costs 1.2 GB of footprint against 0.6 GB on the CPU.
++    static var backend: Backend {
++      let defaults = UserDefaults.standard
++      let threads = defaults.integer(forKey: "BuiltInAIGemmaThreads")
++      let cpu: Backend = .cpu(threadCount: threads > 0 ? threads : nil)
++      switch defaults.string(forKey: "BuiltInAIGemmaBackend") {
++      case "cpu": return cpu
++      case "gpu": return .gpu
++      default: return hasRoomForGPU ? .gpu : cpu
++      }
++    }
++
++    /// What the GPU backend needs on top of what the app already uses, with a
++    /// margin for the pages that keep running next to it.
++    static let gpuMemoryNeeded: UInt64 = 1_500_000_000
++
++    /// Whether loading the model on the GPU leaves the app safely below the
++    /// limit iOS kills it at.
++    static var hasRoomForGPU: Bool {
++      #if os(iOS)
++        // How far the app is from that limit. It counts the increased memory
++        // limit entitlement, and what the app uses already.
++        return UInt64(os_proc_available_memory()) >= gpuMemoryNeeded
++      #else
++        return ProcessInfo.processInfo.physicalMemory >= GemmaModelStore.gpuPhysicalMemory
++      #endif
++    }
++
+     private static func load() async throws -> Engine {
+-      let useGPU = ProcessInfo.processInfo.physicalMemory >= GemmaModelStore.gpuPhysicalMemory
+-      let backend: Backend = useGPU ? .gpu : .cpu()
++      let backend = Self.backend
++      loadedBackend = backend
+       let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+         .appendingPathComponent("BuiltInAI", isDirectory: true)
+       try FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
+@@ -1247,6 +1298,69 @@ final class GemmaModelStore: @unchecked Sendable {
+   }
+ #endif
+ 
++#if canImport(LiteRTLM)
++  /// Records how fast Gemma runs, one JSON line per answer, in
++  /// `Library/Caches/BuiltInAI/stats.jsonl` of the app's container, for
++  /// developers to compare backends and settings on real devices.
++  enum GemmaStats {
++    static func record(
++      started: Date, firstChunk: Date?, lastChunk: Date, chunks: Int, contextTokens: Int
++    ) {
++      var entry: [String: Any] = [
++        "time": ISO8601DateFormatter().string(from: started),
++        "backend": (GemmaRuntime.loadedBackend ?? GemmaRuntime.backend).rawValue,
++        "threads": UserDefaults.standard.integer(forKey: "BuiltInAIGemmaThreads"),
++        "chunks": chunks,
++        "contextTokens": contextTokens,
++        "physicalMemoryMB": ProcessInfo.processInfo.physicalMemory >> 20,
++      ]
++      if let firstChunk {
++        entry["timeToFirstChunkMs"] = Int(firstChunk.timeIntervalSince(started) * 1000)
++        let decode = lastChunk.timeIntervalSince(firstChunk)
++        if chunks > 1, decode > 0 {
++          // LiteRT-LM streams one token per chunk.
++          entry["decodeTokensPerSecond"] = (Double(chunks - 1) / decode * 10).rounded() / 10
++        }
++      }
++      if let footprint = MemoryFootprint.current() {
++        entry["footprintMB"] = footprint.now >> 20
++        entry["peakFootprintMB"] = footprint.peak >> 20
++      }
++      if #available(iOS 13.0, *) {
++        entry["availableMemoryMB"] = os_proc_available_memory() >> 20
++      }
++      let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
++        .appendingPathComponent("BuiltInAI/stats.jsonl")
++      guard var line = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys])
++      else { return }
++      line.append(0x0A)
++      if let handle = try? FileHandle(forWritingTo: caches) {
++        _ = try? handle.seekToEnd()
++        try? handle.write(contentsOf: line)
++        try? handle.close()
++      } else {
++        try? line.write(to: caches)
++      }
++    }
++  }
++
++  /// The memory iOS charges this app for, which is what it kills apps over.
++  enum MemoryFootprint {
++    static func current() -> (now: UInt64, peak: UInt64)? {
++      var info = task_vm_info_data_t()
++      var count = mach_msg_type_number_t(
++        MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
++      let result = withUnsafeMutablePointer(to: &info) {
++        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
++          task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
++        }
++      }
++      guard result == KERN_SUCCESS else { return nil }
++      return (info.phys_footprint, UInt64(max(0, info.ledger_phys_footprint_peak)))
++    }
++  }
++#endif
++
+ /// Downloads one large file in a way that survives being interrupted, even
+ /// by the app being killed.
+ ///
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.h b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.h
+index b0a85d8acf1c3..c6e16ab204978 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.h
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.h
+@@ -29,6 +29,10 @@ class BuiltInAIJavaScriptFeature : public web::JavaScriptFeature {
+   // Sends one event, a JSON string, to the page in `frame`.
+   void Deliver(web::WebFrame* frame, const std::string& event);
+ 
++  // Applies the developer settings passed as launch arguments that concern
++  // the browser rather than the models.
++  static void ApplyDeveloperSettings();
++
+   // The key that ties the engine's sessions to one frame of one tab.
+   static std::string ClientKey(web::WebState* web_state,
+                                const std::string& frame_id);
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
+index e71a8a83425cf..68df92f3ba6f3 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
+@@ -4,6 +4,8 @@
+ 
+ #import "ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.h"
+ 
++#import <UIKit/UIKit.h>
++
+ #import "base/functional/bind.h"
+ #import "base/strings/strcat.h"
+ #import "base/strings/string_number_conversions.h"
+@@ -49,6 +51,8 @@ void DeliverToFrame(base::WeakPtr<web::WebState> weak_web_state,
+ // static
+ BuiltInAIJavaScriptFeature* BuiltInAIJavaScriptFeature::GetInstance() {
+   static base::NoDestructor<BuiltInAIJavaScriptFeature> instance;
++  static bool applied = (ApplyDeveloperSettings(), true);
++  (void)applied;
+   return instance.get();
+ }
+ 
+@@ -82,6 +86,15 @@ BuiltInAIJavaScriptFeature::BuiltInAIJavaScriptFeature()
+ 
+ BuiltInAIJavaScriptFeature::~BuiltInAIJavaScriptFeature() = default;
+ 
++// static
++void BuiltInAIJavaScriptFeature::ApplyDeveloperSettings() {
++  // `-BuiltInAIKeepAwake YES` keeps the device from locking while Chrome is
++  // in the foreground, for long on-device model runs during development.
++  if ([NSUserDefaults.standardUserDefaults boolForKey:@"BuiltInAIKeepAwake"]) {
++    UIApplication.sharedApplication.idleTimerDisabled = YES;
++  }
++}
++
+ void BuiltInAIJavaScriptFeature::Deliver(web::WebFrame* frame,
+                                          const std::string& event) {
+   CallJavaScriptFunction(frame, kDeliverFunction,
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

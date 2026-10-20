@@ -11,8 +11,8 @@ happens on the device:
 - **Gemma 4 E2B** through
   [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) everywhere else, and
   for audio input. The model is downloaded once into the app's container and
-  shared by all origins. It runs on the GPU on devices with 6 GB of RAM or more,
-  and on the CPU on 4 GB devices.
+  shared by all origins, and the download resumes where it stopped. It runs on
+  the GPU whenever the app has the memory for it, and on the CPU otherwise.
 
 ## Architecture
 
@@ -89,6 +89,30 @@ checks pass: `availability()`, `create()`, `prompt()`, `promptStreaming()`,
 `responseConstraint`, `AbortSignal`, `clone()`, `measureContextUsage()`,
 `Summarizer`, and `Translator`.
 
+## Benchmarking on a device
+
+`ios-tools/bench-device.sh` relaunches Chromium on a device once per
+configuration, opens `bundle/test/bench.html`, and prints the stats the browser
+records after the answer:
+
+```sh
+ios-tools/bench-device.sh <udid> <bundle id> auto gpu cpu cpu:2
+```
+
+It passes developer launch arguments that the browser reads:
+`-BuiltInAIGemmaBackend cpu|gpu|auto`, `-BuiltInAIGemmaThreads <n>`, and
+`-BuiltInAIKeepAwake YES`, which keeps the device from locking while Chromium is
+in front. The stats go to `Library/Caches/BuiltInAI/stats.jsonl` in the app's
+container.
+
+Gemma 4 E2B on an iPhone 11 Pro Max (4 GB, no Apple Intelligence):
+
+| Backend        | Decode        | First token | Peak footprint |
+| -------------- | ------------- | ----------- | -------------- |
+| GPU            | 21.9 tokens/s | 0.48 s      | 1.22 GB        |
+| CPU            | 13.9 tokens/s | 2.3 s       | 0.63 GB        |
+| CPU, 2 threads | 12.4 tokens/s | 3.4 s       | 0.61 GB        |
+
 ## Signing for a device
 
 `ios-tools/asc_provision.py` takes an
@@ -107,6 +131,13 @@ without prompts, and writes the GN args to `ios-tools/signing.json`. The build
 then signs with a minimal set of entitlements
 (`ios_chrome_minimal_entitlements`), since Chromium's default ones need app
 groups that the API cannot create.
+
+Two capabilities of the App ID need one visit to the
+[developer portal](https://developer.apple.com/account/resources/identifiers/list),
+since the API cannot enable them: **Extended Virtual Addressing**, without which
+Chromium's allocator cannot start, and **Increased Memory Limit**, which gives
+Gemma room on devices with 4 GB of RAM. Run the script again after enabling
+them, so the profile includes them.
 
 ## Updating the polyfills
 
