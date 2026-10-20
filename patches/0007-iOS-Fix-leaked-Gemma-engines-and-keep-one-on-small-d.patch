@@ -1,0 +1,112 @@
+From c6958c7007f1990bed3e5aba1d9c171e120d59b5 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 12:44:17 +0200
+Subject: [PATCH 7/7] [iOS] Fix leaked Gemma engines, and keep one on small
+ devices
+
+Every GPU turn left a task waiting for the browser to go to the
+background, and with it the turn's conversation and engine, because the
+wait ignored cancellation. Evicted engines stayed in memory, and on an
+iPhone 11 Pro Max the app grew from 430 to 1,180 MB over a few reloads
+until iOS ended it for a page shortage. The wait now ends with its task,
+and evicting an engine brings the app back to about 150 MB.
+
+Devices with less than 6 GB keep one engine at a time, since the device
+can run out of pages well below the app's own limit, and system-wide
+memory pressure now evicts idle engines as well.
+---
+ .../model/built_in_ai_engine.swift            | 49 +++++++++++++++----
+ 1 file changed, 39 insertions(+), 10 deletions(-)
+
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 6096c57f51ea6..7f45d616917b5 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -1512,13 +1512,25 @@ final class DeliveryFlag: @unchecked Sendable {
+     private var timerGeneration = 0
+     private var background = false
+     private var backgrounds = 0
++    private let memoryPressure = DispatchSource.makeMemoryPressureSource(
++      eventMask: [.warning, .critical], queue: .global())
+     private var foregroundWaiters: [CheckedContinuation<Void, Never>] = []
+-    private var backgroundWaiters: [CheckedContinuation<Void, Never>] = []
++    private var backgroundWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
++    /// Waits cancelled before they registered.
++    private var cancelledWaits: Set<UUID> = []
+     #if canImport(UIKit)
+       private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+     #endif
+ 
+     private init() {
++      // The whole device running short, which can end the app before its own
++      // memory warning comes.
++      memoryPressure.setEventHandler { [weak self] in
++        guard let self else { return }
++        let critical = self.memoryPressure.data.contains(.critical)
++        self.evictAll(reason: critical ? "critical memory pressure" : "memory pressure")
++      }
++      memoryPressure.activate()
+       #if canImport(UIKit)
+         let center = NotificationCenter.default
+         center.addObserver(
+@@ -1546,16 +1558,27 @@ final class DeliveryFlag: @unchecked Sendable {
+     var backgroundCount: Int { lock.withLock { backgrounds } }
+ 
+     /// Returns once the browser has gone to the background more often than
+-    /// `count`, or right away if it has. Cancelling the calling task does not
+-    /// end the wait; the caller checks for cancellation after it.
++    /// `count`, or right away if it has, or once the calling task is
++    /// cancelled. Waiters must not outlive their turn: they hold its
++    /// conversation, and through it the engine.
+     func waitForBackground(after count: Int) async {
+-      await withCheckedContinuation { continuation in
+-        let resumeNow: Bool = lock.withLock {
+-          guard backgrounds == count else { return true }
+-          backgroundWaiters.append(continuation)
+-          return false
++      let id = UUID()
++      await withTaskCancellationHandler {
++        await withCheckedContinuation { continuation in
++          let resumeNow: Bool = lock.withLock {
++            if cancelledWaits.remove(id) != nil || backgrounds != count { return true }
++            backgroundWaiters[id] = continuation
++            return false
++          }
++          if resumeNow { continuation.resume() }
+         }
+-        if resumeNow { continuation.resume() }
++      } onCancel: {
++        let continuation: CheckedContinuation<Void, Never>? = lock.withLock {
++          if let continuation = backgroundWaiters.removeValue(forKey: id) { return continuation }
++          cancelledWaits.insert(id)
++          return nil
++        }
++        continuation?.resume()
+       }
+     }
+ 
+@@ -1632,6 +1655,12 @@ final class DeliveryFlag: @unchecked Sendable {
+     /// Whether `plan` fits next to the engines that are loaded.
+     private func hasRoom(for plan: GemmaPlan) -> Bool {
+       if lock.withLock({ engines.isEmpty }) { return true }
++      // The app's own limit is not the device's: a 4 GB iPhone ran out of
++      // pages with the app at 1.3 GB, well below its limit, and iOS killed it.
++      // Small devices keep one engine.
++      if ProcessInfo.processInfo.physicalMemory < GemmaModelStore.gpuPhysicalMemory {
++        return false
++      }
+       #if os(iOS)
+         let needed =
+           (plan.onGPU ? plan.file.gpuMemoryNeeded : GemmaFile.cpuMemoryNeeded) + Self.memoryMargin
+@@ -1665,7 +1694,7 @@ final class DeliveryFlag: @unchecked Sendable {
+           backgrounds += 1
+           timerGeneration += 1
+           defer { backgroundWaiters.removeAll() }
+-          return (timerGeneration, backgroundWaiters)
++          return (timerGeneration, Array(backgroundWaiters.values))
+         }
+         // GPU turns stop now; see `liteRTAttempt`.
+         waiters.forEach { $0.resume() }
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

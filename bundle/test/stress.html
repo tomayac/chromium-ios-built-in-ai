@@ -1,0 +1,74 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Model Memory Stress</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Model Memory Stress</h1>
+    <ol id="log"></ol>
+    <script type="module">
+      // Rounds of text sessions and image sessions, which need different
+      // models, each destroyed after use. The browser's stats show whether
+      // memory comes back between rounds and after the last one.
+      const log = (text) => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        document.querySelector('#log').append(li);
+      };
+      addEventListener('unhandledrejection', ({ reason }) => {
+        log(`Failed: ${reason?.name}: ${reason?.message}`);
+      });
+      const rounds = Number(new URLSearchParams(location.search).get('rounds') || 5);
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      const context = canvas.getContext('2d');
+      context.fillStyle = 'green';
+      context.fillRect(0, 0, 128, 128);
+
+      for (let round = 1; round <= rounds; round++) {
+        const text = await LanguageModel.create();
+        for (const question of [
+          'Name a fruit. One word.',
+          'Name a color. One word.',
+          'Name a planet. One word.',
+        ]) {
+          await text.prompt(question);
+        }
+        text.destroy();
+        const image = await LanguageModel.create({
+          expectedInputs: [{ type: 'text' }, { type: 'image' }],
+        });
+        const color = await image.prompt([
+          {
+            role: 'user',
+            content: [
+              { type: 'text', value: 'What color is this image? One word.' },
+              { type: 'image', value: canvas },
+            ],
+          },
+        ]);
+        image.destroy();
+        log(`Round ${round}: ${color.trim()}`);
+      }
+      log('Done. All sessions destroyed.');
+      document.title = 'Model Memory Stress: done';
+    </script>
+  </body>
+</html>
