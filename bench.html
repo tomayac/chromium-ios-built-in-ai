@@ -13,11 +13,15 @@
         color-scheme: light dark;
       }
       body {
-        font: 15px/1.4 system-ui, sans-serif;
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
         margin: 16px;
       }
       #numbers {
-        font: 600 22px/1.4 system-ui, sans-serif;
+        font:
+          600 22px/1.4 system-ui,
+          sans-serif;
         font-variant-numeric: tabular-nums;
       }
       pre {
@@ -40,6 +44,12 @@
       const question =
         new URLSearchParams(location.search).get('q') ||
         'Explain in about 150 words how to calculate the mean of an array in Java.';
+
+      // Failures end up on the page, so an unattended run never just hangs.
+      addEventListener('unhandledrejection', ({ reason }) => {
+        numbers.textContent = `Failed: ${reason?.name}: ${reason?.message}`;
+        document.title = 'Built-in AI Benchmark: failed';
+      });
 
       const created = performance.now();
       const session = await LanguageModel.create();
