@@ -1,0 +1,13 @@
+{
+  "description": "Chromium for iOS with the built-in AI APIs (LanguageModel, Summarizer, Writer, Rewriter, Translator, and LanguageDetector) on every web page, backed by Apple Foundation Models or by Gemma 4 on devices without Apple Intelligence. Try the test pages at https://tomayac.github.io/chromium-ios-built-in-ai/.",
+  "feedbackEmail": "you@example.com",
+  "privacyPolicyUrl": "https://tomayac.github.io/chromium-ios-built-in-ai/privacy.html",
+  "marketingUrl": "https://github.com/tomayac/chromium-ios-built-in-ai",
+  "review": {
+    "firstName": "First",
+    "lastName": "Last",
+    "email": "you@example.com",
+    "phone": "+1 555 0100",
+    "notes": "An experimental web browser, built from Chromium, that gives web pages on-device AI APIs. No account is needed. To try it, open https://tomayac.github.io/chromium-ios-built-in-ai/ in the app. On devices without Apple Intelligence, the first prompt downloads a 2 GB model from Hugging Face."
+  }
+}

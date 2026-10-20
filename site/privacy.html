@@ -1,0 +1,122 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chromium AI Privacy</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #1f1f1f;
+        --muted: #5f6368;
+        --accent: #1a73e8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --bg: #131314;
+          --fg: #e3e3e3;
+          --muted: #9aa0a6;
+          --accent: #8ab4f8;
+        }
+      }
+      :root[data-theme='dark'] {
+        --bg: #131314;
+        --fg: #e3e3e3;
+        --muted: #9aa0a6;
+        --accent: #8ab4f8;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.55 system-ui,
+          sans-serif;
+        margin: 0;
+        padding: 24px 16px 48px;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.6rem;
+        line-height: 1.2;
+      }
+      h2 {
+        font-size: 1.15rem;
+        margin-top: 28px;
+      }
+      a {
+        color: var(--accent);
+      }
+      .small {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Chromium AI privacy policy</h1>
+      <p class="small">Last updated October 20, 2026.</p>
+      <p>
+        Chromium AI is an experimental build of the open source Chromium browser
+        for iOS that gives web pages on-device AI APIs. It is a personal project
+        of Thomas Steiner.
+      </p>
+
+      <h2>Data the developer receives</h2>
+      <p>
+        None. The app contains no analytics, no advertising, and no accounts,
+        and it sends nothing to the developer.
+      </p>
+
+      <h2>AI prompts</h2>
+      <p>
+        Prompts, images, and audio that web pages pass to the AI APIs are
+        processed on the device, by Apple Foundation Models or by the Gemma
+        model stored in the app. They are not sent to any server by the app. A
+        web page that calls the APIs sees its own prompts and answers, and can
+        do with them what its own privacy policy says.
+      </p>
+
+      <h2>Model download</h2>
+      <p>
+        On devices without Apple Intelligence, the app downloads the Gemma model
+        files from
+        <a href="https://huggingface.co/litert-community">Hugging Face</a> on
+        first use. Hugging Face receives the request, including the device's IP
+        address, as with any download.
+      </p>
+
+      <h2>Browsing</h2>
+      <p>
+        As with any browser, the websites you visit, and the search engine you
+        choose, receive the requests the app makes to them. Browsing data, such
+        as history and cookies, stays on the device until you delete it in the
+        app's settings. The AI models stay until you delete the app.
+      </p>
+
+      <h2>TestFlight</h2>
+      <p>
+        If you test the app through TestFlight, Apple shares crash reports and
+        the feedback you choose to send with the developer, as described in
+        <a href="https://www.apple.com/legal/privacy/data/en/testflight/"
+          >Apple's TestFlight privacy notice</a
+        >.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions go to the
+        <a href="https://github.com/tomayac/chromium-ios-built-in-ai/issues"
+          >project's issue tracker</a
+        >.
+      </p>
+    </main>
+  </body>
+</html>

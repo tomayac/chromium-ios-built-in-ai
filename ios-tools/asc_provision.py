@@ -163,19 +163,26 @@ def ensure_keychain():
   return password
 
 
-def find_identity():
-  """The SHA-1 of a valid Apple Development identity in the keychain."""
+# Certificate types, and the name their identities start with.
+IDENTITY_NAMES = {
+    'DEVELOPMENT': 'Apple Development',
+    'DISTRIBUTION': 'Apple Distribution',
+}
+
+
+def find_identity(certificate_type='DEVELOPMENT'):
+  """The SHA-1 of a valid identity of `certificate_type` in the keychain."""
   output = run('security', 'find-identity', '-v', '-p', 'codesigning',
                KEYCHAIN).decode()
   for line in output.splitlines():
     parts = line.split()
-    if len(parts) > 2 and '"Apple Development' in line:
+    if len(parts) > 2 and f'"{IDENTITY_NAMES[certificate_type]}' in line:
       return parts[1]
   return None
 
 
-def ensure_certificate(asc, password):
-  identity = find_identity()
+def ensure_certificate(asc, password, certificate_type='DEVELOPMENT'):
+  identity = find_identity(certificate_type)
   if identity:
     print(f'Signing identity {identity} already present.')
     return identity
@@ -184,14 +191,15 @@ def ensure_certificate(asc, password):
     key = os.path.join(tmp, 'key.pem')
     csr = os.path.join(tmp, 'request.csr')
     run(OPENSSL, 'req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout',
-        key, '-out', csr, '-subj', '/CN=Chromium iOS Development')
+        key, '-out', csr, '-subj',
+        f'/CN=Chromium iOS {IDENTITY_NAMES[certificate_type]}')
     with open(csr) as f:
       csr_content = f.read()
     created = asc.post('/certificates', {
         'data': {
             'type': 'certificates',
             'attributes': {
-                'certificateType': 'DEVELOPMENT',
+                'certificateType': certificate_type,
                 'csrContent': csr_content,
             },
         }
@@ -212,14 +220,14 @@ def ensure_certificate(asc, password):
   # Lets codesign use the key without asking.
   run('security', 'set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:',
       '-s', '-k', password, KEYCHAIN)
-  identity = find_identity()
+  identity = find_identity(certificate_type)
   if not identity:
     sys.exit('The new certificate did not show up as a valid identity.')
   print(f'Created signing identity {identity}.')
   return identity
 
 
-def certificate_id(asc, identity):
+def certificate_id(asc, identity, certificate_type='DEVELOPMENT'):
   """The App Store Connect id of the certificate behind `identity`."""
   pem = run('security', 'find-certificate', '-a', '-Z', '-p', KEYCHAIN).decode()
   # Match by serial number, which App Store Connect reports.
@@ -234,7 +242,7 @@ def certificate_id(asc, identity):
     serial = run(OPENSSL, 'x509', '-noout', '-serial',
                  input=certificate.encode()).decode()
     serials.add(serial.strip().split('=')[1].upper().lstrip('0'))
-  listing = asc.get('/certificates?filter[certificateType]=DEVELOPMENT'
+  listing = asc.get(f'/certificates?filter[certificateType]={certificate_type}'
                     '&limit=200')
   for certificate in listing['data']:
     serial = certificate['attributes']['serialNumber'].upper().lstrip('0')
@@ -304,7 +312,8 @@ def ensure_bundle_id(asc, identifier, name):
   return bundle['id']
 
 
-def create_profile(asc, name, bundle_id, certificate, device):
+def create_profile(asc, name, bundle_id, certificate, device,
+                   profile_type='IOS_APP_DEVELOPMENT'):
   # A profile is fixed to its certificates and devices, so a fresh one is
   # created each time and the one it replaces deleted.
   existing = asc.get(f'/profiles?filter[name]={urllib.request.quote(name)}')
@@ -315,14 +324,17 @@ def create_profile(asc, name, bundle_id, certificate, device):
           'type': 'profiles',
           'attributes': {
               'name': name,
-              'profileType': 'IOS_APP_DEVELOPMENT',
+              'profileType': profile_type,
           },
           'relationships': {
               'bundleId': {'data': {'type': 'bundleIds', 'id': bundle_id}},
               'certificates': {
                   'data': [{'type': 'certificates', 'id': certificate}]
               },
-              'devices': {'data': [{'type': 'devices', 'id': device}]},
+              # App Store profiles list no devices.
+              'devices': {
+                  'data': [{'type': 'devices', 'id': device}] if device else []
+              },
           },
       }
   })['data']

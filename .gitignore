@@ -11,3 +11,6 @@ ios-tools/signing.json
 *.mobileprovision
 .claude/
 *.ipa
+
+# Contact details for Beta App Review.
+ios-tools/testflight.json

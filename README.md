@@ -110,8 +110,9 @@ page ── LanguageModel / Summarizer / … (polyfills, page world)
 - `bundle/`: builds the polyfill script that Chromium injects, and a test page
   for the APIs.
 - `ios-tools/`: provisions a device build through the App Store Connect API,
-  with no Xcode UI involved, and packages releases for AltStore.
+  with no Xcode UI involved, and releases builds for AltStore and TestFlight.
 - `altstore/`: the AltStore source and its install page.
+- `site/`: other pages for GitHub Pages, such as the privacy policy.
 
 ## Building
 
@@ -242,6 +243,31 @@ the development certificate and the provisioning profile, which lists device
 IDs. It writes the `.ipa` and adds the release to `altstore/source.json`, with
 the entitlements and privacy descriptions AltStore shows before installing.
 Publishing the `altstore/` folder to GitHub Pages updates the source.
+
+## Releasing on TestFlight
+
+`ios-tools/testflight.py` takes the same build and ships it through TestFlight:
+
+```sh
+ios-tools/testflight.py --key-id <key id> --issuer-id <issuer id> \
+    --app out/ios-sideload/Chromium.app --bundle-id com.example.browser \
+    --notes "What to test in this build." --release
+```
+
+It creates an Apple Distribution certificate and an App Store profile, and
+re-signs a copy of the app with them, the next free build number,
+`PrivacyInfo.xcprivacy`, and `ITSAppUsesNonExemptEncryption` set to `NO`, since
+Chromium only uses exempt, standard encryption. TestFlight builds get both
+memory capabilities, extended virtual addressing included. It then validates and
+uploads the `.ipa` with `altool`, and waits until App Store Connect has
+processed it. With `--release`, it fills in the beta app information and the
+Beta App Review contact from `ios-tools/testflight.json` (see
+`testflight.example.json`; it stays out of git), adds the build to a group with
+a public link, and submits it for review.
+
+The API cannot create apps, so the app record needs one visit to
+[App Store Connect](https://appstoreconnect.apple.com/apps) first: **New App**,
+iOS, any unique name, and the App ID's bundle ID.
 
 ## Updating the polyfills
 
