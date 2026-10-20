@@ -1,0 +1,81 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Model Lifecycle Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+      li {
+        margin: 4px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Model Lifecycle Check</h1>
+    <ol id="log"></ol>
+    <script type="module">
+      // A text session, then an image session, which needs another model, then
+      // a second turn of the text session, which must survive its model being
+      // replaced. Both sessions stay alive afterwards, for checks of what the
+      // browser does with idle sessions and in the background.
+      const log = (text) => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        document.querySelector('#log').append(li);
+      };
+      addEventListener('unhandledrejection', ({ reason }) => {
+        log(`Failed: ${reason?.name}: ${reason?.message}`);
+      });
+
+      const time = async (label, promise) => {
+        const started = performance.now();
+        const result = await promise;
+        log(`${label} (${Math.round(performance.now() - started)} ms): ${result}`);
+        return result;
+      };
+
+      const text = await LanguageModel.create();
+      await time('Text', text.prompt('My name is Ada. Reply with one short sentence.'));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      const context = canvas.getContext('2d');
+      context.fillStyle = 'blue';
+      context.fillRect(0, 0, 128, 128);
+      const image = await LanguageModel.create({
+        expectedInputs: [{ type: 'text' }, { type: 'image' }],
+      });
+      await time(
+        'Image',
+        image.prompt([
+          {
+            role: 'user',
+            content: [
+              { type: 'text', value: 'What color is this image? One word.' },
+              { type: 'image', value: canvas },
+            ],
+          },
+        ])
+      );
+
+      await time('Text again', text.prompt('What is my name? One word.'));
+      // Both sessions are kept, on purpose.
+      globalThis.sessions = { text, image };
+      log('Done. Sessions kept.');
+      document.title = 'Model Lifecycle Check: done';
+    </script>
+  </body>
+</html>
