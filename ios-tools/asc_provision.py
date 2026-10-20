@@ -43,8 +43,10 @@ PROFILES = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles')
 OPENSSL = next((p for p in ('/opt/homebrew/bin/openssl', '/usr/bin/openssl')
                 if os.path.exists(p)), 'openssl')
 
-# The entitlements of `Chrome+Minimal.entitlements`, as App ID capabilities.
-CAPABILITIES = ['EXTENDED_VIRTUAL_ADDRESSING', 'INCREASED_MEMORY_LIMIT']
+# App ID capabilities to enable. `Chrome+Minimal.entitlements` needs none. The
+# API offers no memory capabilities (increased memory limit, extended virtual
+# addressing); those are checkboxes on the App ID in the developer portal.
+CAPABILITIES = []
 
 
 def run(*args, **kwargs):
@@ -362,6 +364,7 @@ def main():
       'bundle_id': bundle_identifier,
       'gn_args': {
           'ios_code_signing_identity': identity,
+          'ios_code_signing_identity_description': '',
           'ios_app_bundle_id_prefix': args.prefix,
           'ios_mobileprovision_files': [profile],
           'ios_chrome_minimal_entitlements': True,
