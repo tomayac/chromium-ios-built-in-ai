@@ -31,6 +31,29 @@ produces random tokens on the A13 GPU, at 16 and 32 bits alike, and runs with
 family 5 and older, untested, use the multimodal file on the CPU. The GPU is
 only used when the app has the memory for it.
 
+## Model memory
+
+Apple Foundation Models run in a system process that loads and evicts the model
+on its own. Gemma runs in the browser, which manages it:
+
+- An engine loads at a session's first prompt, not at `create()`, and Gemma runs
+  one turn at a time across all tabs.
+- Each session keeps a conversation with its engine, holding the KV cache, so
+  the next turn does not re-read the history.
+- A second engine, for a session needing another file, stays loaded only while
+  the app has room for it. Otherwise the other engine goes first.
+- Engines are evicted on memory warnings, a minute after the last session is
+  gone, and 20 seconds after the browser goes to the background, within
+  background task time, before iOS suspends it. Evicted sessions keep working:
+  their next turn reloads the engine and rebuilds the conversation from the
+  history the polyfill sends with every turn.
+- GPU turns wait for the foreground, since iOS does not let background apps use
+  the GPU. A GPU turn running as the browser goes to the background stops, and
+  runs again in the foreground unless part of its answer reached the page.
+
+`bundle/test/lifecycle.html` exercises this: a text session, an image session,
+which needs the other file, and a second text turn.
+
 ## Architecture
 
 Chromium injects the

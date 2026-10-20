@@ -1,0 +1,656 @@
+From c5679712c756e0f960a92615d3cbc5024fe06d6f Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 11:44:52 +0200
+Subject: [PATCH 6/6] [iOS] Manage Gemma engines across sessions, memory, and
+ the background
+
+Sessions keep a conversation with their engine, which holds the engine
+and its KV cache. Evicting an engine now has its sessions let go of
+those conversations, so the engine really goes, and sessions survive it:
+their next turn reloads the engine and rebuilds the conversation from
+the history the page sends with every turn. An epoch per engine keeps
+conversations of evicted engines from being reused.
+
+Gemma runs one turn at a time browser-wide, so an engine being replaced
+is idle and freed before the next one loads. A second engine stays
+loaded only while the app has room for it, so two pages with different
+needs do not reload on every turn. Engines are evicted on memory
+warnings, also while sessions exist, a minute after the last session is
+gone, and 20 seconds after the browser goes to the background, within
+background task time, since iOS suspends the app soon after.
+
+iOS lets GPU work in the background neither run nor fail, so it would
+hang. GPU turns wait for the foreground, an engine that finished loading
+in the background does not start generating, and a GPU turn running as
+the browser goes there is stopped and runs again in the foreground
+unless part of its answer reached the page already. Sessions are now
+counted synchronously, and loads, evictions, and the memory after them
+are recorded with the stats.
+
+On an iPhone 11 Pro Max, two pages using the text and the multimodal
+file at the same time peak at 1.2 GB of footprint, against 2.2 GB
+before, and a backgrounded browser drops to 0.1 GB.
+---
+ .../model/built_in_ai_engine.swift            | 469 +++++++++++++++---
+ .../model/built_in_ai_java_script_feature.mm  |  11 +-
+ 2 files changed, 419 insertions(+), 61 deletions(-)
+
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index acffb9c564a09..6096c57f51ea6 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -628,20 +628,27 @@ final class AISession: @unchecked Sendable {
+       #endif
+     case .gemma:
+       contextWindow = GemmaModelStore.contextWindow
+-      #if canImport(LiteRTLM)
+-        Task { await GemmaRuntime.shared.retain() }
+-      #endif
+     }
++    #if canImport(LiteRTLM)
++      if backend == .gemma { GemmaRuntime.shared.register(self) }
++    #endif
+   }
+ 
+   deinit {
+     #if canImport(LiteRTLM)
+-      if backend == .gemma {
+-        Task { await GemmaRuntime.shared.release() }
+-      }
++      if backend == .gemma { GemmaRuntime.shared.unregister(ObjectIdentifier(self)) }
+     #endif
+   }
+ 
++  /// Lets go of the kept model conversation, and with it the engine it holds.
++  /// The next turn rebuilds it from the conversation the page sends.
++  func dropCachedConversation() {
++    lock.withLock { cached = nil }
++  }
++
++  /// Whether a turn is running, on whatever model.
++  var isGenerating: Bool { lock.withLock { !running.isEmpty } }
++
+   func cancelAll() {
+     let tasks = lock.withLock {
+       defer { running.removeAll() }
+@@ -756,21 +763,84 @@ final class AISession: @unchecked Sendable {
+       guard let last = messages.popLast(), last.role == .user else {
+         throw BuiltInAIError.syntax("The conversation must end with a user message.")
+       }
++      guard let plan = gemmaPlan else {
++        throw BuiltInAIError.invalidState("The session has no Gemma plan.")
++      }
++      let runtime = GemmaRuntime.shared
++      // One Gemma turn at a time in the whole browser: the CPU and the GPU
++      // gain nothing from two, and an engine being replaced is then idle and
++      // really goes before the next one loads.
++      await runtime.turns.acquire()
++      defer { Task { await runtime.turns.release() } }
++
++      // iOS does not let apps use the GPU in the background. Turns wait for
++      // the foreground there, and one that the background interrupts runs
++      // again from scratch, as long as the page has none of its answer yet.
++      let delivered = DeliveryFlag()
++      var forwardChunk: (@Sendable (String) -> Void)?
++      if let onChunk {
++        forwardChunk = { text in
++          delivered.set()
++          onChunk(text)
++        }
++      }
++      var retried = false
++      while true {
++        try Task.checkCancellation()
++        if plan.onGPU, runtime.isInBackground {
++          GemmaStats.event("turn", detail: "waiting for the foreground")
++          await runtime.waitForForeground()
++        }
++        let backgrounds = runtime.backgroundCount
++        do {
++          return try await liteRTAttempt(
++            plan: plan, last: last, messages: messages, contents: contents, schema: schema,
++            includeSchemaInPrompt: includeSchemaInPrompt, onChunk: forwardChunk,
++            backgrounds: backgrounds)
++        } catch let error as CancellationError {
++          throw error
++        } catch {
++          guard plan.onGPU, runtime.backgroundCount != backgrounds else {
++            GemmaStats.event("turn", detail: "failed: \(error)")
++            throw error
++          }
++          if retried || delivered.isSet {
++            GemmaStats.event("turn", detail: "interrupted by the background, part of it delivered")
++            throw BuiltInAIError.operation(
++              "The answer was interrupted because the browser went to the background.")
++          }
++          GemmaStats.event("turn", detail: "interrupted by the background, runs again")
++          retried = true
++        }
++      }
++    }
++
++    /// One attempt at a turn, on the engine `plan` loads.
++    private func liteRTAttempt(
++      plan: GemmaPlan, last: ChatMessage, messages: [ChatMessage], contents: ChatContents,
++      schema: Data?, includeSchemaInPrompt: Bool, onChunk: (@Sendable (String) -> Void)?,
++      backgrounds: Int
++    ) async throws -> GenerationOutput {
++      let runtime = GemmaRuntime.shared
+       // Constrained decoding is a property of the whole conversation, and
+       // turning it on cuts Gemma's free-form answers short. So only turns with
+       // a schema get it, and a conversation is reused only for the same kind of
+       // turn.
+       let structured = schema != nil
+-      let history = ["format:\(structured)"] + messages.map(\.fingerprint)
++      // Loaded, or reloaded after an eviction. A kept conversation belongs to
++      // the engine it was made with, which the epoch identifies.
++      let (engine, epoch) = try await runtime.engine(for: plan)
++      // Loading takes seconds, and the browser may have gone to the background
++      // meanwhile. GPU work must not start there.
++      if plan.onGPU, runtime.backgroundCount != backgrounds || runtime.isInBackground {
++        throw GemmaInterruption()
++      }
++      let history = ["format:\(structured)", "epoch:\(epoch)"] + messages.map(\.fingerprint)
+ 
+       let conversation: Conversation
+       if let reused = takeCached(matching: history) as? Conversation, reused.isAlive {
+         conversation = reused
+       } else {
+-        guard let plan = gemmaPlan else {
+-          throw BuiltInAIError.invalidState("The session has no Gemma plan.")
+-        }
+-        let engine = try await GemmaRuntime.shared.engine(for: plan)
+         let system = systemText(contents.messages)
+         conversation = try await engine.createConversation(
+           with: ConversationConfig(
+@@ -799,6 +869,15 @@ final class AISession: @unchecked Sendable {
+       var firstChunk: Date?
+       var lastChunk = started
+       var chunks = 0
++      // iOS lets GPU work in the background neither run nor fail: it never
++      // finishes. So it stops, cleanly, as the browser goes there.
++      let watcher: Task<Void, Never>? =
++        plan.onGPU
++        ? Task {
++          await runtime.waitForBackground(after: backgrounds)
++          if !Task.isCancelled { try? conversation.cancel() }
++        } : nil
++      defer { watcher?.cancel() }
+       try await withTaskCancellationHandler {
+         for try await chunk in conversation.sendMessageStream(prompt, responseFormat: format) {
+           try Task.checkCancellation()
+@@ -814,13 +893,18 @@ final class AISession: @unchecked Sendable {
+       } onCancel: {
+         try? conversation.cancel()
+       }
++      // A stream stopped for the background ends early, which is no answer.
++      if plan.onGPU, runtime.backgroundCount != backgrounds { throw GemmaInterruption() }
+       if format != nil, !text.isEmpty { onChunk?(text) }
+ 
+-      remember(
+-        conversation,
+-        fingerprint: history + [
+-          last.fingerprint, ChatMessage(role: .model, parts: [.text(text)]).fingerprint,
+-        ])
++      // Not after an eviction during the turn: that would keep the old engine.
++      if runtime.isCurrent(epoch) {
++        remember(
++          conversation,
++          fingerprint: history + [
++            last.fingerprint, ChatMessage(role: .model, parts: [.text(text)]).fingerprint,
++          ])
++      }
+       let usage = (try? conversation.getTokenCount()) ?? (text.count + 3) / 4
+       GemmaStats.record(
+         plan: gemmaPlan, started: started, firstChunk: firstChunk, lastChunk: lastChunk,
+@@ -1077,6 +1161,10 @@ struct GemmaFile: Hashable, Sendable {
+   static let multimodal = GemmaFile(
+     name: "gemma-4-E2B-it.litertlm", isMultimodal: true, runsOnCPU: true,
+     gpuMemoryNeeded: 1_500_000_000)
++  /// What the multimodal file needs on the CPU, encoders included: 0.6 GB of
++  /// footprint for text, up to 1.2 GB with an image, plus margin.
++  static let cpuMemoryNeeded: UInt64 = 1_000_000_000
++
+   /// Text, on the GPU only, including family 6. 2.0 GB. 0.4 GB of footprint.
+   static let text = GemmaFile(
+     name: "gemma-4-E2B-it-gpu.litertlm", isMultimodal: false, runsOnCPU: false,
+@@ -1347,65 +1435,284 @@ final class GemmaModelStore: @unchecked Sendable {
+   static let maximumDownloadAttempts = 5
+ }
+ 
++/// A GPU turn the browser going to the background stopped.
++struct GemmaInterruption: Error {}
++
++/// Set once, read from anywhere.
++final class DeliveryFlag: @unchecked Sendable {
++  private let lock = NSLock()
++  private var value = false
++  var isSet: Bool { lock.withLock { value } }
++  func set() { lock.withLock { value = true } }
++}
++
+ #if canImport(LiteRTLM)
+-  /// The loaded Gemma model. Loading takes seconds and the weights take
+-  /// hundreds of megabytes, so only one is loaded at a time: a session with
+-  /// another plan replaces it, and the old engine goes once its conversations
+-  /// are gone.
+-  actor GemmaRuntime {
++  /// Serializes work, first come, first served.
++  actor TurnGate {
++    private var busy = false
++    private var waiters: [CheckedContinuation<Void, Never>] = []
++
++    func acquire() async {
++      guard busy else {
++        busy = true
++        return
++      }
++      await withCheckedContinuation { waiters.append($0) }
++    }
++
++    func release() {
++      if waiters.isEmpty {
++        busy = false
++      } else {
++        waiters.removeFirst().resume()
++      }
++    }
++  }
++
++  /// The loaded Gemma engines, and when they go.
++  ///
++  /// Sessions keep a conversation with their engine, which holds the engine
++  /// and its KV cache, so evicting an engine means having its sessions let go
++  /// of their conversations. Sessions survive that: their next turn reloads
++  /// the engine and rebuilds the conversation from the history the page sends
++  /// with every turn.
++  ///
++  /// Gemma runs one turn at a time (`turns`), so engines other than the one in
++  /// use are idle. A second engine stays loaded only while the app has room
++  /// for it, so that two pages with different needs do not reload on every
++  /// turn. Engines are also evicted on memory warnings, a minute after the
++  /// last session is gone, and when the browser goes to the background, after
++  /// a grace period that runs as background task time, since iOS suspends the
++  /// app soon after. GPU turns wait for the foreground, since iOS does not let
++  /// background apps use the GPU.
++  final class GemmaRuntime: @unchecked Sendable {
+     static let shared = GemmaRuntime()
+ 
+-    /// How long the model stays loaded after its last session is gone.
+-    static let idleUnloadDelay: UInt64 = 60_000_000_000
++    static let idleUnloadDelay: TimeInterval = 60
++    static let backgroundUnloadDelay: TimeInterval = 20
++    /// Headroom kept on top of what a new engine needs before the others go.
++    static let memoryMargin: UInt64 = 300_000_000
++
++    let turns = TurnGate()
+ 
+-    private var loaded: (plan: GemmaPlan, engine: Task<Engine, Error>)?
+-    private var users = 0
+-    private var generation = 0
++    private struct WeakSession {
++      weak var session: AISession?
++    }
++
++    private struct Loaded {
++      var engine: Task<Engine, Error>
++      var epoch: Int
++      var lastUsed: Date
++    }
+ 
+-    init() {
++    private let lock = NSLock()
++    private var engines: [GemmaPlan: Loaded] = [:]
++    private var nextEpoch = 0
++    private var sessions: [ObjectIdentifier: WeakSession] = [:]
++    private var timerGeneration = 0
++    private var background = false
++    private var backgrounds = 0
++    private var foregroundWaiters: [CheckedContinuation<Void, Never>] = []
++    private var backgroundWaiters: [CheckedContinuation<Void, Never>] = []
++    #if canImport(UIKit)
++      private var backgroundTask = UIBackgroundTaskIdentifier.invalid
++    #endif
++
++    private init() {
+       #if canImport(UIKit)
+-        NotificationCenter.default.addObserver(
+-          forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil
+-        ) { _ in
+-          Task { await GemmaRuntime.shared.unloadIfIdle() }
++        let center = NotificationCenter.default
++        center.addObserver(
++          forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
++        ) { [weak self] _ in
++          self?.evictAll(reason: "memory warning")
++        }
++        center.addObserver(
++          forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
++        ) { [weak self] _ in
++          MainActor.assumeIsolated { self?.enteredBackground() }
++        }
++        center.addObserver(
++          forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
++        ) { [weak self] _ in
++          MainActor.assumeIsolated { self?.enteredForeground() }
+         }
+       #endif
+     }
+ 
+-    /// A session holds the model from its creation until it is gone.
+-    func retain() { users += 1 }
++    var isInBackground: Bool { lock.withLock { background } }
+ 
+-    func release() {
+-      users -= 1
+-      guard users == 0 else { return }
+-      generation += 1
+-      let current = generation
+-      Task {
+-        try? await Task.sleep(nanoseconds: Self.idleUnloadDelay)
+-        await self.unloadIfIdle(generation: current)
++    /// How often the browser went to the background so far, to tell whether a
++    /// turn was interrupted by it.
++    var backgroundCount: Int { lock.withLock { backgrounds } }
++
++    /// Returns once the browser has gone to the background more often than
++    /// `count`, or right away if it has. Cancelling the calling task does not
++    /// end the wait; the caller checks for cancellation after it.
++    func waitForBackground(after count: Int) async {
++      await withCheckedContinuation { continuation in
++        let resumeNow: Bool = lock.withLock {
++          guard backgrounds == count else { return true }
++          backgroundWaiters.append(continuation)
++          return false
++        }
++        if resumeNow { continuation.resume() }
+       }
+     }
+ 
+-    /// Drops the model unless a session uses it, or one came and went since
+-    /// `generation`. The engine frees its memory once nothing references it.
+-    func unloadIfIdle(generation: Int? = nil) {
+-      guard users == 0, generation == nil || generation == self.generation else { return }
+-      loaded = nil
++    /// Returns once the browser is in the foreground.
++    func waitForForeground() async {
++      await withCheckedContinuation { continuation in
++        let resumeNow: Bool = lock.withLock {
++          guard background else { return true }
++          foregroundWaiters.append(continuation)
++          return false
++        }
++        if resumeNow { continuation.resume() }
++      }
++    }
++
++    func isCurrent(_ epoch: Int) -> Bool {
++      lock.withLock { engines.values.contains { $0.epoch == epoch } }
+     }
+ 
+-    func engine(for plan: GemmaPlan) async throws -> Engine {
+-      if let loaded, loaded.plan == plan { return try await loaded.engine.value }
+-      let task = Task { try await Self.load(plan) }
+-      loaded = (plan, task)
++    func register(_ session: AISession) {
++      lock.withLock {
++        sessions[ObjectIdentifier(session)] = WeakSession(session: session)
++        timerGeneration += 1
++      }
++    }
++
++    func unregister(_ id: ObjectIdentifier) {
++      let generation: Int? = lock.withLock {
++        sessions.removeValue(forKey: id)
++        guard sessions.isEmpty else { return nil }
++        timerGeneration += 1
++        return timerGeneration
++      }
++      if let generation {
++        DispatchQueue.global().asyncAfter(deadline: .now() + Self.idleUnloadDelay) {
++          [weak self] in
++          guard let self, self.lock.withLock({ self.timerGeneration == generation }) else { return }
++          self.evictAll(reason: "idle")
++        }
++      }
++    }
++
++    /// The engine for `plan`, loading it if it has to, after evicting the
++    /// others if the app has no room for both. Returns the epoch the engine
++    /// belongs to. Called by the turn holding `turns`.
++    func engine(for plan: GemmaPlan) async throws -> (Engine, Int) {
++      let existing: Loaded? = lock.withLock {
++        engines[plan]?.lastUsed = Date()
++        return engines[plan]
++      }
++      if let existing { return (try await existing.engine.value, existing.epoch) }
++
++      if !hasRoom(for: plan) {
++        let others = lock.withLock { Array(engines.keys) }
++        for other in others { evict(other, reason: "room for \(plan.file.name)") }
++      }
++      let loaded: Loaded = lock.withLock {
++        nextEpoch += 1
++        let loaded = Loaded(
++          engine: Task { try await Self.load(plan) }, epoch: nextEpoch, lastUsed: Date())
++        engines[plan] = loaded
++        return loaded
++      }
+       do {
+-        return try await task.value
++        return (try await loaded.engine.value, loaded.epoch)
+       } catch {
+-        if loaded?.plan == plan { loaded = nil }
++        lock.withLock {
++          if engines[plan]?.epoch == loaded.epoch { engines[plan] = nil }
++        }
+         throw error
+       }
+     }
+ 
++    /// Whether `plan` fits next to the engines that are loaded.
++    private func hasRoom(for plan: GemmaPlan) -> Bool {
++      if lock.withLock({ engines.isEmpty }) { return true }
++      #if os(iOS)
++        let needed =
++          (plan.onGPU ? plan.file.gpuMemoryNeeded : GemmaFile.cpuMemoryNeeded) + Self.memoryMargin
++        return UInt64(os_proc_available_memory()) >= needed
++      #else
++        return ProcessInfo.processInfo.physicalMemory >= GemmaModelStore.gpuPhysicalMemory
++      #endif
++    }
++
++    /// Drops the engine of `plan` and every conversation that holds it. A
++    /// turn that is running finishes on it, and nothing keeps it after that.
++    private func evict(_ plan: GemmaPlan, reason: String) {
++      guard lock.withLock({ engines.removeValue(forKey: plan) }) != nil else { return }
++      let live = lock.withLock { sessions.values.compactMap(\.session) }
++      live.filter { $0.gemmaPlan == plan }.forEach { $0.dropCachedConversation() }
++      GemmaStats.event(
++        "evict", detail: "\(plan.file.name) on \(plan.onGPU ? "gpu" : "cpu"): \(reason)",
++        measureAfter: 3)
++    }
++
++    func evictAll(reason: String) {
++      let plans = lock.withLock { Array(engines.keys) }
++      plans.forEach { evict($0, reason: reason) }
++    }
++
++    #if canImport(UIKit)
++      @MainActor
++      private func enteredBackground() {
++        let (generation, waiters): (Int, [CheckedContinuation<Void, Never>]) = lock.withLock {
++          background = true
++          backgrounds += 1
++          timerGeneration += 1
++          defer { backgroundWaiters.removeAll() }
++          return (timerGeneration, backgroundWaiters)
++        }
++        // GPU turns stop now; see `liteRTAttempt`.
++        waiters.forEach { $0.resume() }
++        guard lock.withLock({ !engines.isEmpty }) else { return }
++        // iOS suspends the app soon, and timers stop with it. Background task
++        // time keeps the app running for the grace period, so that a quick
++        // switch to another app does not cost a reload.
++        let application = UIApplication.shared
++        endBackgroundTask()
++        let task = application.beginBackgroundTask(withName: "BuiltInAIModelUnload") {
++          [weak self] in
++          self?.evictAll(reason: "background time ran out")
++          MainActor.assumeIsolated { self?.endBackgroundTask() }
++        }
++        lock.withLock { backgroundTask = task }
++        let delay = min(Self.backgroundUnloadDelay, max(0, application.backgroundTimeRemaining - 5))
++        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
++          guard let self, self.lock.withLock({ self.timerGeneration == generation }) else { return }
++          self.evictAll(reason: "background")
++          self.endBackgroundTask()
++        }
++      }
++
++      @MainActor
++      private func enteredForeground() {
++        let waiters = lock.withLock {
++          background = false
++          timerGeneration += 1
++          defer { foregroundWaiters.removeAll() }
++          return foregroundWaiters
++        }
++        endBackgroundTask()
++        waiters.forEach { $0.resume() }
++      }
++
++      @MainActor
++      private func endBackgroundTask() {
++        let task = lock.withLock {
++          defer { backgroundTask = .invalid }
++          return backgroundTask
++        }
++        if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
++      }
++    #endif
++
+     private static func load(_ plan: GemmaPlan) async throws -> Engine {
++      let started = Date()
+       let backend: Backend = plan.onGPU ? .gpu : .cpu(threadCount: plan.threads)
+       let activation: ActivationDataType? =
+         switch plan.activation {
+@@ -1427,6 +1734,10 @@ final class GemmaModelStore: @unchecked Sendable {
+           maxNumTokens: GemmaModelStore.contextWindow, cacheDir: caches.path,
+           activationDataType: activation))
+       try await engine.initialize()
++      GemmaStats.event(
++        "load",
++        detail: "\(plan.file.name) on \(plan.onGPU ? "gpu" : "cpu") in "
++          + "\(Int(Date().timeIntervalSince(started) * 1000)) ms")
+       return engine
+     }
+   }
+@@ -1469,21 +1780,61 @@ final class GemmaModelStore: @unchecked Sendable {
+       if #available(iOS 13.0, *) {
+         entry["availableMemoryMB"] = os_proc_available_memory() >> 20
+       }
+-      let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
++      write(entry)
++    }
++
++    private static let writeLock = NSLock()
++
++    /// Appends one JSON line. Lines are written whole, one at a time.
++    static func write(_ entry: [String: Any]) {
++      let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+         .appendingPathComponent("BuiltInAI/stats.jsonl")
+       guard var line = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys])
+       else { return }
+       line.append(0x0A)
+-      if let handle = try? FileHandle(forWritingTo: caches) {
+-        _ = try? handle.seekToEnd()
+-        try? handle.write(contentsOf: line)
+-        try? handle.close()
+-      } else {
+-        try? line.write(to: caches)
++      writeLock.withLock {
++        if let handle = try? FileHandle(forWritingTo: file) {
++          _ = try? handle.seekToEnd()
++          try? handle.write(contentsOf: line)
++          try? handle.close()
++        } else {
++          try? FileManager.default.createDirectory(
++            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
++          try? line.write(to: file)
++        }
+       }
+     }
+   }
+ 
++  extension GemmaStats {
++    /// Records a lifecycle event of the engine with the app's memory, and
++    /// again `measureAfter` seconds later, once the engine had time to go.
++    static func event(_ name: String, detail: String, measureAfter: TimeInterval? = nil) {
++      write(eventEntry(name, detail: detail))
++      if let measureAfter {
++        DispatchQueue.global().asyncAfter(deadline: .now() + measureAfter) {
++          write(eventEntry("\(name) +\(Int(measureAfter))s", detail: detail))
++        }
++      }
++    }
++
++    private static func eventEntry(_ name: String, detail: String) -> [String: Any] {
++      var entry: [String: Any] = [
++        "time": ISO8601DateFormatter().string(from: Date()),
++        "event": name,
++        "detail": detail,
++      ]
++      if let footprint = MemoryFootprint.current() {
++        entry["footprintMB"] = footprint.now >> 20
++        entry["peakFootprintMB"] = footprint.peak >> 20
++      }
++      #if os(iOS)
++        entry["availableMemoryMB"] = os_proc_available_memory() >> 20
++      #endif
++      return entry
++    }
++  }
++
+   /// The memory iOS charges this app for, which is what it kills apps over.
+   enum MemoryFootprint {
+     static func current() -> (now: UInt64, peak: UInt64)? {
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
+index 68df92f3ba6f3..09eae465ada6e 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_java_script_feature.mm
+@@ -7,6 +7,7 @@
+ #import <UIKit/UIKit.h>
+ 
+ #import "base/functional/bind.h"
++#import "base/logging.h"
+ #import "base/strings/strcat.h"
+ #import "base/strings/string_number_conversions.h"
+ #import "base/strings/sys_string_conversions.h"
+@@ -35,15 +36,21 @@ void DeliverToFrame(base::WeakPtr<web::WebState> weak_web_state,
+                     const std::string& event) {
+   web::WebState* web_state = weak_web_state.get();
+   if (!web_state) {
++    DVLOG(1) << "Built-in AI event dropped, the tab is gone: " << event;
+     return;
+   }
+   BuiltInAIJavaScriptFeature* feature =
+       BuiltInAIJavaScriptFeature::GetInstance();
+   web::WebFrame* frame =
+       feature->GetWebFramesManager(web_state)->GetFrameWithId(frame_id);
+-  if (frame) {
+-    feature->Deliver(frame, event);
++  if (!frame) {
++    // Frames of a tab can be missing for a while, around the browser going to
++    // the background for instance. The page then never hears back.
++    LOG(WARNING) << "Built-in AI event dropped, frame " << frame_id
++                 << " is unknown: " << event.substr(0, 200);
++    return;
+   }
++  feature->Deliver(frame, event);
+ }
+ 
+ }  // namespace
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
