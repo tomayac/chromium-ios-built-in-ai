@@ -55,6 +55,20 @@ on its own. Gemma runs in the browser, which manages it:
 easy to verify: a canvas and a PNG `Blob` as images, a WAV `Blob` and an
 `AudioBuffer` of speech as audio, and both in one prompt.
 
+`bundle/test/digits.html` asks for strings to be repeated verbatim (dates, phone
+numbers, long digit runs, codes, text with typos), where GPU precision problems
+show first. On an iPhone 11 Pro Max, the text-only GPU file repeats all of them
+exactly at 16 and at 32 bits; 32 bits costs 12% of decode speed and twice the
+load time, so 16 bits stays the default there.
+
+`bundle/test/compacting/` is the session compacting demo of web-ai-demos with an
+autopilot (`?auto`): it chats in English, German, and French, compacts the
+session with Language Detector and Summarizer, and asks one more question. It
+passes on the simulator (Apple Foundation Models) and on the iPhone (Gemma).
+
+Test pages opened with `?v=<seconds since the epoch>` do not run again when the
+browser restores them as tabs on a later launch.
+
 `bundle/test/lifecycle.html` exercises this: a text session, an image session,
 which needs the other file, and a second text turn.
 

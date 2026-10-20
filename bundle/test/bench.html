@@ -36,6 +36,10 @@
     <div id="numbers">Starting…</div>
     <pre id="output"></pre>
     <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
       // One streamed answer of bounded length, timed from the page: time to
       // the first chunk, and chunks per second after it. The browser records
       // its own numbers, memory included, next to these.

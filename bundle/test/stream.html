@@ -13,7 +13,9 @@
         color-scheme: light dark;
       }
       body {
-        font: 15px/1.4 system-ui, sans-serif;
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
         margin: 16px;
       }
       pre {
@@ -46,7 +48,10 @@
       status.textContent = 'Streaming…';
       try {
         for await (const chunk of session.promptStreaming(question)) {
-          chunks.push({ t: Math.round(performance.now() - started), n: chunk.length });
+          chunks.push({
+            t: Math.round(performance.now() - started),
+            n: chunk.length,
+          });
           streamed += chunk;
           output.textContent = streamed;
           status.textContent = `Streaming: ${chunks.length} chunks, ${Math.round(performance.now() - started)} ms`;
