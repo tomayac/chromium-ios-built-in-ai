@@ -1,7 +1,7 @@
 From c6958c7007f1990bed3e5aba1d9c171e120d59b5 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 12:44:17 +0200
-Subject: [PATCH 7/9] [iOS] Fix leaked Gemma engines, and keep one on small
+Subject: [PATCH 07/10] [iOS] Fix leaked Gemma engines, and keep one on small
  devices
 
 Every GPU turn left a task waiting for the browser to go to the

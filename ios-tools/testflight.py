@@ -112,6 +112,25 @@ def package(app_path, identity, profile, bundle_identifier, build_number,
     with open(info_path, 'wb') as f:
       plistlib.dump(info, f, fmt=plistlib.FMT_BINARY
                     if raw.startswith(b'bplist') else plistlib.FMT_XML)
+    # App Store Connect requires a version on every framework, which Lottie's
+    # Info.plist leaves out.
+    frameworks = os.path.join(copy, 'Frameworks')
+    for name in os.listdir(frameworks) if os.path.isdir(frameworks) else []:
+      plist_path = os.path.join(frameworks, name, 'Info.plist')
+      if not os.path.exists(plist_path):
+        continue
+      with open(plist_path, 'rb') as f:
+        plist_raw = f.read()
+      plist = plistlib.loads(plist_raw)
+      if 'CFBundleShortVersionString' not in plist:
+        plist['CFBundleShortVersionString'] = plist.get('CFBundleVersion', '1.0')
+        with open(plist_path, 'wb') as f:
+          plistlib.dump(plist, f, fmt=plistlib.FMT_BINARY
+                        if plist_raw.startswith(b'bplist') else plistlib.FMT_XML)
+    # Pseudo-locales for testing translations, which App Store Connect does not
+    # recognize.
+    for pseudo in ('ar_XB.lproj', 'en_XA.lproj'):
+      shutil.rmtree(os.path.join(copy, pseudo), ignore_errors=True)
     shutil.copy(PRIVACY_MANIFEST, os.path.join(copy, 'PrivacyInfo.xcprivacy'))
     shutil.copy(profile, os.path.join(copy, 'embedded.mobileprovision'))
 
@@ -151,10 +170,26 @@ def altool(action, ipa, key_id, issuer_id):
   return output
 
 
+def upload_problems(asc, app, build_number):
+  """Apple's errors for the upload of `build_number`, once it failed."""
+  for upload in asc.get(f'/apps/{app}/buildUploads?limit=50')['data']:
+    attributes = upload['attributes']
+    if (attributes['cfBundleVersion'] == build_number
+        and attributes['state']['state'] == 'FAILED'):
+      return [f'{e["code"]}: {e["description"]}'
+              for e in attributes['state']['errors']] or ['FAILED']
+  return []
+
+
 def wait_for_build(asc, app, build_number, timeout=3600):
   started = time.time()
   state = 'not there yet'
   while time.time() - started < timeout:
+    # A rejected upload never turns into a build; the upload says why.
+    problems = upload_problems(asc, app, build_number)
+    if problems:
+      sys.exit(f'App Store Connect rejected {build_number}:\n' +
+               '\n'.join(problems))
     listing = asc.get(f'/builds?filter[app]={app}'
                       f'&filter[version]={build_number}')
     if listing['data']:

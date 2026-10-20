@@ -227,8 +227,12 @@ is_debug = false
 dcheck_always_on = false
 symbol_level = 0
 enable_litert_lm = true
+ios_enable_memory_debugging = false
 ios_chrome_sideload_entitlements = true
 ```
+
+`ios_enable_memory_debugging = false` leaves out the memory debugger, whose
+private UIKit call App Store Connect rejects.
 
 Build it with the signing GN args from above, then package it:
 

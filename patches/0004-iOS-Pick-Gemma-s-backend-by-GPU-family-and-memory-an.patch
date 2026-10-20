@@ -1,8 +1,8 @@
 From d8944763d2be1746df04e6cb9bd928b527b3d960 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 10:12:17 +0200
-Subject: [PATCH 4/9] [iOS] Pick Gemma's backend by GPU family and memory, and
- record its speed
+Subject: [PATCH 04/10] [iOS] Pick Gemma's backend by GPU family and memory,
+ and record its speed
 
 Runs Gemma on the GPU only on Apple GPU family 7 (A14) and later, and
 only when loading it there leaves the app at least 1.5 GB from its

@@ -1,0 +1,113 @@
+From da2b3597ce5dbbd63db78a0b55807e4bb2198d02 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 16:08:11 +0200
+Subject: [PATCH 10/10] [iOS] Leave out the private memory warning API without
+ memory debugging
+
+The memory debugger triggers memory warnings with UIKit's private
+`_performMemoryWarning`, compiled in whenever the build is not official.
+App Store Connect rejects any binary that references it (ITMS-90338), so
+the calls now also depend on `ios_enable_memory_debugging`, and a release
+build that turns memory debugging off can go to TestFlight.
+---
+ ios/chrome/browser/memory/model/BUILD.gn      |  1 +
+ .../browser/memory/model/memory_debugger.mm   | 23 +++++++++++--------
+ 2 files changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/ios/chrome/browser/memory/model/BUILD.gn b/ios/chrome/browser/memory/model/BUILD.gn
+index 290d98391dab4..2267e28e0402d 100644
+--- a/ios/chrome/browser/memory/model/BUILD.gn
++++ b/ios/chrome/browser/memory/model/BUILD.gn
+@@ -20,6 +20,7 @@ source_set("model") {
+     "memory_metrics.h",
+   ]
+   deps = [
++    ":features",
+     "//base",
+     "//components/prefs",
+     "//ios/chrome/browser/shared/model/prefs:pref_names",
+diff --git a/ios/chrome/browser/memory/model/memory_debugger.mm b/ios/chrome/browser/memory/model/memory_debugger.mm
+index d8b02d8296d47..4a2e07447af0e 100644
+--- a/ios/chrome/browser/memory/model/memory_debugger.mm
++++ b/ios/chrome/browser/memory/model/memory_debugger.mm
+@@ -10,6 +10,8 @@
+ #import <memory>
+ 
+ #import "base/containers/heap_array.h"
++#import "build/buildflag.h"
++#import "ios/chrome/browser/memory/model/features.h"
+ #import "ios/chrome/browser/memory/model/memory_metrics.h"
+ #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
+ 
+@@ -110,10 +112,11 @@ const CGFloat kPadding = 10;
+                usingLabel:_dirtyVirtualMemoryLabel];
+ 
+ // Since _performMemoryWarning is a private API it can't be compiled into
+-// official builds.
++// official builds, or into builds without memory debugging, which App Store
++// Connect accepts too.
+ // TODO(lliabraa): Figure out how to support memory warnings (or something
+ // like them) in official builds.
+-#if !defined(OFFICIAL_BUILD)
++#if !defined(OFFICIAL_BUILD) && BUILDFLAG(IOS_ENABLE_MEMORY_DEBUGGING)
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wundeclared-selector"
+   [self addButtonWithTitle:@"Trigger Memory Warning"
+@@ -121,7 +124,7 @@ const CGFloat kPadding = 10;
+                     action:@selector(_performMemoryWarning)
+                 withOrigin:[self originForSubviewAtIndex:index++]];
+ #pragma clang diagnostic pop
+-#endif  // !defined(OFFICIAL_BUILD)
++#endif  // !defined(OFFICIAL_BUILD) && BUILDFLAG(IOS_ENABLE_MEMORY_DEBUGGING)
+ 
+   // Display a text input to set the amount of artificial memory bloat and a
+   // button to reset the bloat to zero.
+@@ -138,10 +141,11 @@ const CGFloat kPadding = 10;
+   [self updateBloat];
+ 
+ // Since _performMemoryWarning is a private API it can't be compiled into
+-// official builds.
++// official builds, or into builds without memory debugging, which App Store
++// Connect accepts too.
+ // TODO(lliabraa): Figure out how to support memory warnings (or something
+ // like them) in official builds.
+-#if !defined(OFFICIAL_BUILD)
++#if !defined(OFFICIAL_BUILD) && BUILDFLAG(IOS_ENABLE_MEMORY_DEBUGGING)
+   // Display a text input to control the rate of continuous memory warnings.
+   _continuousMemoryWarningField =
+       [[UITextField alloc] initWithFrame:CGRectZero];
+@@ -151,7 +155,7 @@ const CGFloat kPadding = 10;
+              inputAction:@selector(updateMemoryWarningInterval)
+                  atIndex:index++];
+   [_continuousMemoryWarningField setText:@"0.0"];
+-#endif  // !defined(OFFICIAL_BUILD)
++#endif  // !defined(OFFICIAL_BUILD) && BUILDFLAG(IOS_ENABLE_MEMORY_DEBUGGING)
+ 
+   // Display a text input to control the refresh rate of the memory debugger.
+   _refreshField = [[UITextField alloc] initWithFrame:CGRectZero];
+@@ -476,10 +480,11 @@ const CGFloat kPadding = 10;
+ #pragma mark Memory warning interval methods
+ 
+ // Since _performMemoryWarning is a private API it can't be compiled into
+-// official builds.
++// official builds, or into builds without memory debugging, which App Store
++// Connect accepts too.
+ // TODO(lliabraa): Figure out how to support memory warnings (or something
+ // like them) in official builds.
+-#if !defined(OFFICIAL_BUILD)
++#if !defined(OFFICIAL_BUILD) && BUILDFLAG(IOS_ENABLE_MEMORY_DEBUGGING)
+ - (void)updateMemoryWarningInterval {
+   [_memoryWarningTimer invalidate];
+   double timerValue;
+@@ -515,7 +520,7 @@ const CGFloat kPadding = 10;
+                                       repeats:YES];
+ #pragma clang diagnostic push
+ }
+-#endif  // !defined(OFFICIAL_BUILD)
++#endif  // !defined(OFFICIAL_BUILD) && BUILDFLAG(IOS_ENABLE_MEMORY_DEBUGGING)
+ 
+ #pragma mark UITextViewDelegate methods
+ 
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
