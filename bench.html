@@ -51,8 +51,36 @@
         document.title = 'Built-in AI Benchmark: failed';
       });
 
+      // `?image` declares image input and asks about a drawing, which routes
+      // the session to a multimodal model.
+      const withImage = new URLSearchParams(location.search).has('image');
+      const options = withImage
+        ? { expectedInputs: [{ type: 'text' }, { type: 'image' }] }
+        : {};
+      let input = question;
+      if (withImage) {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 256;
+        const context = canvas.getContext('2d');
+        context.fillStyle = 'white';
+        context.fillRect(0, 0, 256, 256);
+        context.fillStyle = 'red';
+        context.beginPath();
+        context.arc(128, 128, 80, 0, 2 * Math.PI);
+        context.fill();
+        input = [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', value: 'Describe this image in one sentence.' },
+              { type: 'image', value: canvas },
+            ],
+          },
+        ];
+      }
+
       const created = performance.now();
-      const session = await LanguageModel.create();
+      const session = await LanguageModel.create(options);
       const loadMs = Math.round(performance.now() - created);
 
       const started = performance.now();
@@ -67,7 +95,7 @@
           `${first ? Math.round(first - started) : '…'} ms · ${chunks} chunks · ` +
           `${rate} chunks/s`;
       };
-      for await (const chunk of session.promptStreaming(question)) {
+      for await (const chunk of session.promptStreaming(input)) {
         chunks++;
         if (!first) {
           first = performance.now();
