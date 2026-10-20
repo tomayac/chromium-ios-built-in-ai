@@ -1,0 +1,92 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Exact Copy Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --pass: #188038;
+        --fail: #c5221f;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+      #score {
+        font:
+          600 22px/1.4 system-ui,
+          sans-serif;
+      }
+      li {
+        margin: 4px 0;
+        word-break: break-word;
+      }
+      .pass {
+        color: var(--pass);
+      }
+      .fail {
+        color: var(--fail);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Exact Copy Check</h1>
+    <div id="score">Running…</div>
+    <ol id="log"></ol>
+    <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
+      // Strings the model has to repeat verbatim: digits, dates, codes, and
+      // text with a deliberate typo. Numeric precision problems on GPUs show
+      // up here first, as doubled or dropped digits, while prose looks fine.
+      const cases = [
+        '2033-01-10',
+        '+49 30 123 456 78',
+        '3141592653589793',
+        'DE89 3704 0044 0532 0130 00',
+        '387 382 2022 2446443',
+        'Order 7781-AX-0093 ships on 2027-11-28 at 14:05.',
+        'The quik brown fox jumps over the lazzy dog.',
+        '[1] [2] [3] [10] [11] [12]',
+      ];
+      const score = document.querySelector('#score');
+      const log = document.querySelector('#log');
+      let passed = 0;
+      for (const [i, text] of cases.entries()) {
+        // A fresh session per case, so that one corrupted answer does not
+        // carry over into the next.
+        const session = await LanguageModel.create({
+          initialPrompts: [
+            {
+              role: 'system',
+              content:
+                'Repeat the user message exactly, character for character. ' +
+                'Output nothing else.',
+            },
+          ],
+        });
+        const answer = (await session.prompt(text)).trim();
+        session.destroy();
+        const ok = answer === text;
+        passed += ok;
+        const li = document.createElement('li');
+        li.className = ok ? 'pass' : 'fail';
+        li.textContent = ok ? text : `${text} → ${answer}`;
+        log.append(li);
+        score.textContent = `${passed} / ${i + 1} exact`;
+      }
+      score.textContent = `Done: ${passed} / ${cases.length} exact`;
+      document.title = `Exact Copy Check: ${passed}/${cases.length}`;
+    </script>
+  </body>
+</html>

@@ -5,7 +5,9 @@
 // the session with messages in several languages, compacts it, and asks one
 // more question, then reports what happened. Only runs with `?auto`.
 
-if (new URLSearchParams(location.search).has('auto')) {
+import { isRestoredRun } from '../fresh.js';
+
+if (new URLSearchParams(location.search).has('auto') && !isRestoredRun()) {
   const $ = (selector) => document.querySelector(selector);
   const status = () => $('#status').textContent;
   const banner = document.createElement('div');
@@ -37,7 +39,9 @@ if (new URLSearchParams(location.search).has('auto')) {
     const before = document.querySelectorAll('.msg.assistant').length;
     $('#user-input').value = text;
     $('#send-btn').click();
-    await until(() => document.querySelectorAll('.msg.assistant').length > before);
+    await until(
+      () => document.querySelectorAll('.msg.assistant').length > before,
+    );
     await until(idle);
     const answers = document.querySelectorAll('.msg.assistant span:last-child');
     return answers[answers.length - 1].textContent;
@@ -62,8 +66,12 @@ if (new URLSearchParams(location.search).has('auto')) {
       const before = $('#token-label').textContent;
       $('#compact-btn').click();
       await until(() => /compacted|failed/i.test(status()) && idle());
-      note(`compacted: ${status()}; before ${before}; now ${$('#token-label').textContent}`);
-      const after = await send('Which topics have we covered so far? List them briefly.');
+      note(
+        `compacted: ${status()}; before ${before}; now ${$('#token-label').textContent}`,
+      );
+      const after = await send(
+        'Which topics have we covered so far? List them briefly.',
+      );
       note(`after compaction: ${after.slice(0, 120).replace(/\s+/g, ' ')}`);
       note('done');
       document.title = 'Compacting autopilot: done';

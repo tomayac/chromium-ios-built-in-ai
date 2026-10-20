@@ -27,6 +27,10 @@
     <h1>Model Lifecycle Check</h1>
     <ol id="log"></ol>
     <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
       // A text session, then an image session, which needs another model, then
       // a second turn of the text session, which must survive its model being
       // replaced. Both sessions stay alive afterwards, for checks of what the
@@ -43,12 +47,17 @@
       const time = async (label, promise) => {
         const started = performance.now();
         const result = await promise;
-        log(`${label} (${Math.round(performance.now() - started)} ms): ${result}`);
+        log(
+          `${label} (${Math.round(performance.now() - started)} ms): ${result}`,
+        );
         return result;
       };
 
       const text = await LanguageModel.create();
-      await time('Text', text.prompt('My name is Ada. Reply with one short sentence.'));
+      await time(
+        'Text',
+        text.prompt('My name is Ada. Reply with one short sentence.'),
+      );
 
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 128;
@@ -68,7 +77,7 @@
               { type: 'image', value: canvas },
             ],
           },
-        ])
+        ]),
       );
 
       await time('Text again', text.prompt('What is my name? One word.'));

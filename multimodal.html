@@ -48,6 +48,10 @@
       <tbody id="results"></tbody>
     </table>
     <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
       // Image and audio input with answers that are easy to check, through the
       // input types the polyfill converts differently.
       const results = document.querySelector('#results');
@@ -94,11 +98,11 @@
         context.fillText('CAT 42', 128, 150);
       });
       const textBlob = await new Promise((resolve) =>
-        text.toBlob(resolve, 'image/png')
+        text.toBlob(resolve, 'image/png'),
       );
       const speechBlob = await (await fetch('speech.wav')).blob();
       const speechBuffer = await new AudioContext().decodeAudioData(
-        await speechBlob.arrayBuffer()
+        await speechBlob.arrayBuffer(),
       );
 
       const ask = (session, value, type, question) =>
@@ -112,52 +116,80 @@
           },
         ]);
 
-      const imageOptions = { expectedInputs: [{ type: 'text' }, { type: 'image' }] };
-      const audioOptions = { expectedInputs: [{ type: 'text' }, { type: 'audio' }] };
+      const imageOptions = {
+        expectedInputs: [{ type: 'text' }, { type: 'image' }],
+      };
+      const audioOptions = {
+        expectedInputs: [{ type: 'text' }, { type: 'audio' }],
+      };
 
       await check(
         'availability (image)',
         () => LanguageModel.availability(imageOptions),
-        /available|downloadable/
+        /available|downloadable/,
       );
       await check(
         'availability (audio)',
         () => LanguageModel.availability(audioOptions),
-        /available|downloadable/
+        /available|downloadable/,
       );
 
       const image = await LanguageModel.create(imageOptions);
       await check(
         'image: canvas',
-        () => ask(image, circle, 'image',
-          'What color is the shape in this image? One word.'),
-        /red/i
+        () =>
+          ask(
+            image,
+            circle,
+            'image',
+            'What color is the shape in this image? One word.',
+          ),
+        /red/i,
       );
       const imageAgain = await LanguageModel.create(imageOptions);
       await check(
         'image: PNG blob',
-        () => ask(imageAgain, textBlob, 'image',
-          'What text is written in this image? Reply with the text only.'),
-        /cat\s*42/i
+        () =>
+          ask(
+            imageAgain,
+            textBlob,
+            'image',
+            'What text is written in this image? Reply with the text only.',
+          ),
+        /cat\s*42/i,
       );
 
       const audio = await LanguageModel.create(audioOptions);
       await check(
         'audio: WAV blob',
-        () => ask(audio, speechBlob, 'audio',
-          'Transcribe this audio. Reply with the transcription only.'),
-        /quick brown fox/i
+        () =>
+          ask(
+            audio,
+            speechBlob,
+            'audio',
+            'Transcribe this audio. Reply with the transcription only.',
+          ),
+        /quick brown fox/i,
       );
       const audioAgain = await LanguageModel.create(audioOptions);
       await check(
         'audio: AudioBuffer',
-        () => ask(audioAgain, speechBuffer, 'audio',
-          'Transcribe this audio. Reply with the transcription only.'),
-        /quick brown fox/i
+        () =>
+          ask(
+            audioAgain,
+            speechBuffer,
+            'audio',
+            'Transcribe this audio. Reply with the transcription only.',
+          ),
+        /quick brown fox/i,
       );
 
       const both = await LanguageModel.create({
-        expectedInputs: [{ type: 'text' }, { type: 'image' }, { type: 'audio' }],
+        expectedInputs: [
+          { type: 'text' },
+          { type: 'image' },
+          { type: 'audio' },
+        ],
       });
       await check(
         'image and audio together',
@@ -177,7 +209,7 @@
               ],
             },
           ]),
-        /cat[\s\S]*fox/i
+        /cat[\s\S]*fox/i,
       );
 
       document.title = 'Multimodal Check: done';

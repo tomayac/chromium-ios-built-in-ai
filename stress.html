@@ -24,6 +24,10 @@
     <h1>Model Memory Stress</h1>
     <ol id="log"></ol>
     <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
       // Rounds of text sessions and image sessions, which need different
       // models, each destroyed after use. The browser's stats show whether
       // memory comes back between rounds and after the last one.
@@ -35,7 +39,9 @@
       addEventListener('unhandledrejection', ({ reason }) => {
         log(`Failed: ${reason?.name}: ${reason?.message}`);
       });
-      const rounds = Number(new URLSearchParams(location.search).get('rounds') || 5);
+      const rounds = Number(
+        new URLSearchParams(location.search).get('rounds') || 5,
+      );
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 128;
       const context = canvas.getContext('2d');
