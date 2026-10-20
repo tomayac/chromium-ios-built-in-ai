@@ -295,6 +295,30 @@ The API cannot create apps, so the app record needs one visit to
 [App Store Connect](https://appstoreconnect.apple.com/apps) first: **New App**,
 iOS, any unique name, and the App ID's bundle ID.
 
+## Releasing on AltStore PAL
+
+AltStore PAL, the AltStore edition from the EU app marketplace, installs only
+apps that Apple has notarized, and needs no Apple ID or computer. After
+`testflight.py --notarize` and Apple's review:
+
+```sh
+ios-tools/altstore_pal.py --key-id <key id> --issuer-id <issuer id> \
+    --app <app Apple ID> --version <notarized version>
+```
+
+The script finds the alternative distribution package Apple generated for the
+version, has AltStore process it, and unpacks it into `altstore/pal/<build>/`.
+It writes `altstore/pal/source.json`, a source of its own with the app's
+`marketplaceID`, since AltStore PAL and AltStore Classic read different kinds of
+downloads. Once `altstore/pal/` is on GitHub Pages, the install page shows an
+**Add to AltStore PAL** button, which opens AltStore PAL through its own
+`altstore-pal://` scheme even where AltStore Classic is installed too.
+
+The app first has to be authorized for AltStore PAL once: AltStore issues a
+marketplace token for the team's Developer ID
+(`POST https://api.altstore.io/register`), which goes into App Store Connect
+under **Users and Access → Integrations → Marketplace**.
+
 ## Updating the polyfills
 
 `bundle/update-chromium.sh` builds the polyfills from a

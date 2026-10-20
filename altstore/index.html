@@ -88,6 +88,9 @@
         gap: 12px;
         margin: 24px 0 8px;
       }
+      .button[hidden] {
+        display: none;
+      }
       .button {
         display: block;
         text-align: center;
@@ -174,7 +177,10 @@
       </p>
 
       <div class="buttons">
-        <a class="button" id="altstore" href="#">Add to AltStore</a>
+        <a class="button" id="altstore-pal" href="#" hidden
+          >Add to AltStore PAL</a
+        >
+        <a class="button" id="altstore" href="#">Add to AltStore Classic</a>
         <a class="button secondary" id="sidestore" href="#">Add to SideStore</a>
       </div>
       <div class="source">
@@ -197,14 +203,11 @@
           >
           (with AltServer on a Mac or PC) or
           <a href="https://sidestore.io">SideStore</a> with your Apple ID. A
-          free Apple ID works. AltStore PAL, the edition from the EU app
-          marketplace, only installs apps that Apple has notarized, which this
-          build is not yet.
+          free Apple ID works. In the EU, AltStore PAL works too, once its
+          button shows above: it installs the version Apple has notarized, with
+          no Apple ID and no computer.
         </li>
-        <li>
-          Tap <strong>Add to AltStore</strong> or
-          <strong>Add to SideStore</strong> above.
-        </li>
+        <li>Tap the button for your installer above.</li>
         <li>Install <strong>Built-In AI Browser</strong> from the source.</li>
         <li>
           Open a page that uses the APIs, such as the
@@ -271,6 +274,18 @@
         `altstore://source?url=${encoded}`;
       document.querySelector('#sidestore').href =
         `sidestore://source?url=${encoded}`;
+      // The AltStore PAL source exists once Apple has notarized a version.
+      const palURL = new URL('pal/source.json', location.href).href;
+      fetch(palURL, { method: 'HEAD' })
+        .then((response) => {
+          if (!response.ok) return;
+          const button = document.querySelector('#altstore-pal');
+          // AltStore PAL has a scheme of its own, so the link opens it even
+          // where AltStore Classic is installed too.
+          button.href = `altstore-pal://source?url=${encodeURIComponent(palURL)}`;
+          button.hidden = false;
+        })
+        .catch(() => {});
       document
         .querySelector('#copy')
         .addEventListener('click', async (event) => {

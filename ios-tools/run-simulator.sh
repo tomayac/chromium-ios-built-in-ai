@@ -41,6 +41,11 @@ xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 xcrun simctl install "$UDID" "$APP"
 xcrun simctl spawn "$UDID" defaults write "$BUNDLE_ID" FirstRunForceDisabled -bool YES
 
+# A server left over on the port would take the results.
+if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port $PORT is in use; stop what listens there first." >&2
+  exit 1
+fi
 python3 "$HERE/../bundle/test/serve.py" --port "$PORT" --results "$RESULTS" \
   >/dev/null 2>&1 &
 SERVER=$!
@@ -53,6 +58,10 @@ sleep 6
 xcrun simctl openurl "$UDID" "chromium://localhost:$PORT/index.html?autorun"
 sleep 2
 axe tap --label Open --udid "$UDID" >/dev/null 2>&1 || true
+# Taps on the prompt do not always register. Return picks its default button,
+# Open, and does nothing once the prompt is gone.
+sleep 1
+axe key 40 --udid "$UDID" >/dev/null 2>&1 || true
 
 for _ in $(seq 1 100); do
   [ -s "$RESULTS" ] && break
