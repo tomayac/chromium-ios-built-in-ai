@@ -1,0 +1,72 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Built-in AI Benchmark</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 16px;
+      }
+      #numbers {
+        font: 600 22px/1.4 system-ui, sans-serif;
+        font-variant-numeric: tabular-nums;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Built-in AI Benchmark</h1>
+    <div id="numbers">Starting…</div>
+    <pre id="output"></pre>
+    <script type="module">
+      // One streamed answer of bounded length, timed from the page: time to
+      // the first chunk, and chunks per second after it. The browser records
+      // its own numbers, memory included, next to these.
+      const numbers = document.querySelector('#numbers');
+      const output = document.querySelector('#output');
+      const question =
+        new URLSearchParams(location.search).get('q') ||
+        'Explain in about 150 words how to calculate the mean of an array in Java.';
+
+      const created = performance.now();
+      const session = await LanguageModel.create();
+      const loadMs = Math.round(performance.now() - created);
+
+      const started = performance.now();
+      let first = 0;
+      let chunks = 0;
+      const show = (state) => {
+        const now = performance.now();
+        const rate =
+          chunks > 1 ? ((chunks - 1) / ((now - first) / 1000)).toFixed(1) : '…';
+        numbers.textContent =
+          `${state} · create ${loadMs} ms · first chunk ` +
+          `${first ? Math.round(first - started) : '…'} ms · ${chunks} chunks · ` +
+          `${rate} chunks/s`;
+      };
+      for await (const chunk of session.promptStreaming(question)) {
+        chunks++;
+        if (!first) {
+          first = performance.now();
+        }
+        output.textContent += chunk;
+        show('Streaming');
+      }
+      show('Done');
+      document.title = 'Built-in AI Benchmark: done';
+    </script>
+  </body>
+</html>
