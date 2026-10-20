@@ -8,8 +8,10 @@
 #
 #   ios-tools/bench-device.sh <udid> <bundle id> <config>...
 #
-# Each config is a backend, optionally with a CPU thread count: `auto`,
-# `gpu`, `cpu`, `cpu:2`, `cpu:6`.
+# Each config is a backend, optionally with a CPU thread count and an
+# activation precision: `auto`, `gpu`, `gpu@f32`, `cpu`, `cpu:2`, `cpu@f16`.
+# BENCH_EXTRA_ARGS adds launch arguments to every run, such as
+# `-BuiltInAIGemmaModelFile gemma-4-E2B-it-gpu.litertlm`.
 
 set -eu
 UDID=${1:?usage: $0 <udid> <bundle id> <config>...}
@@ -28,9 +30,12 @@ stats_lines() {
 }
 
 for config in "$@"; do
-  backend=${config%%:*}
+  activation=default
+  case "$config" in *@*) activation=${config#*@} ;; esac
+  base=${config%%@*}
+  backend=${base%%:*}
   threads=0
-  [ "$backend" != "$config" ] && threads=${config#*:}
+  [ "$backend" != "$base" ] && threads=${base#*:}
   before=$(stats_lines)
   echo "== $config"
   # The engine is loaded once per process, so every configuration gets a
@@ -38,7 +43,8 @@ for config in "$@"; do
   xcrun devicectl device process launch --device "$UDID" --terminate-existing \
     --payload-url "$URL" "$BUNDLE_ID" -- \
     -BuiltInAIGemmaBackend "$backend" -BuiltInAIGemmaThreads "$threads" \
-    -BuiltInAIKeepAwake YES >/dev/null
+    -BuiltInAIGemmaActivation "$activation" -BuiltInAIKeepAwake YES \
+    ${BENCH_EXTRA_ARGS:-} >/dev/null
   deadline=$(($(date +%s) + 900))
   while [ "$(stats_lines)" -le "$before" ]; do
     if [ "$(date +%s)" -ge "$deadline" ]; then

@@ -10,9 +10,26 @@ happens on the device:
   input works from iOS 26, and image input from iOS 27.
 - **Gemma 4 E2B** through
   [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) everywhere else, and
-  for audio input. The model is downloaded once into the app's container and
-  shared by all origins, and the download resumes where it stopped. It runs on
-  the GPU whenever the app has the memory for it, and on the CPU otherwise.
+  for audio input. Each model file is downloaded once into the app's container
+  and shared by all origins, and downloads resume where they stopped.
+
+## Gemma files and backends
+
+The session's `expectedInputs` decide which Gemma file it needs, and the GPU
+family decides where that file runs correctly:
+
+| Session       | GPU family 6 (A13)                  | GPU family 7 and later (A14, M1 on)                           |
+| ------------- | ----------------------------------- | ------------------------------------------------------------- |
+| Text only     | `gemma-4-E2B-it-gpu.litertlm` (GPU) | the same, or the multimodal file if it is already there (GPU) |
+| Images, audio | `gemma-4-E2B-it.litertlm` (CPU)     | `gemma-4-E2B-it.litertlm` (GPU)                               |
+
+The text file (2.0 GB) runs on the GPU only. The multimodal file (2.6 GB)
+produces random tokens on the A13 GPU, at 16 and 32 bits alike, and runs with
+32-bit activations on family 7, where 16 bits corrupt digits
+([LiteRT-LM #2814](https://github.com/google-ai-edge/LiteRT-LM/issues/2814),
+[#3913](https://github.com/google-ai-edge/LiteRT-LM/issues/3913)). GPUs of
+family 5 and older, untested, use the multimodal file on the CPU. The GPU is
+only used when the app has the memory for it.
 
 ## Architecture
 
@@ -100,18 +117,22 @@ ios-tools/bench-device.sh <udid> <bundle id> auto gpu cpu cpu:2
 ```
 
 It passes developer launch arguments that the browser reads:
-`-BuiltInAIGemmaBackend cpu|gpu|auto`, `-BuiltInAIGemmaThreads <n>`, and
-`-BuiltInAIKeepAwake YES`, which keeps the device from locking while Chromium is
-in front. The stats go to `Library/Caches/BuiltInAI/stats.jsonl` in the app's
-container.
+`-BuiltInAIBackend apple|gemma|auto`, `-BuiltInAIGemmaBackend cpu|gpu|auto`,
+`-BuiltInAIGemmaModelFile <name>`, `-BuiltInAIGemmaThreads <n>`,
+`-BuiltInAIGemmaActivation f16|f32`, and `-BuiltInAIKeepAwake YES`, which keeps
+the device from locking while Chromium is in front. `BENCH_EXTRA_ARGS` adds more
+of them, and `BENCH_URL` points at another page, such as `bench.html?image` for
+a session with image input. The stats, including the start of each answer, go to
+`Library/Caches/BuiltInAI/stats.jsonl` in the app's container.
 
-Gemma 4 E2B on an iPhone 11 Pro Max (4 GB, no Apple Intelligence):
+Gemma 4 E2B on an iPhone 11 Pro Max (A13, 4 GB, no Apple Intelligence):
 
-| Backend        | Decode        | First token | Peak footprint |
-| -------------- | ------------- | ----------- | -------------- |
-| GPU            | 21.9 tokens/s | 0.48 s      | 1.22 GB        |
-| CPU            | 13.9 tokens/s | 2.3 s       | 0.63 GB        |
-| CPU, 2 threads | 12.4 tokens/s | 3.4 s       | 0.61 GB        |
+| File and backend         | Decode             | First token | Peak footprint | Answer        |
+| ------------------------ | ------------------ | ----------- | -------------- | ------------- |
+| Text file, GPU           | 21–22 tokens/s     | 2.2–2.6 s   | 0.43 GB        | correct       |
+| Multimodal, CPU          | 13.6–13.9 tokens/s | 2.5 s       | 0.63 GB        | correct       |
+| Multimodal, GPU          | 20.5 tokens/s      | –           | 1.19 GB        | random tokens |
+| Multimodal, GPU, 32 bits | 17.4 tokens/s      | –           | 1.37 GB        | random tokens |
 
 ## Signing for a device
 

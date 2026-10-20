@@ -1,31 +1,60 @@
-From f542041feffd365c2892a7f14a0e79b549fd5fb0 Mon Sep 17 00:00:00 2001
+From d8944763d2be1746df04e6cb9bd928b527b3d960 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 10:12:17 +0200
-Subject: [PATCH 4/4] [iOS] Run Gemma on the GPU when the app has room, and
+Subject: [PATCH 4/5] [iOS] Pick Gemma's backend by GPU family and memory, and
  record its speed
 
-Picks the GPU whenever loading the model there leaves the app at least
-1.5 GB from its memory limit, and the CPU otherwise, in place of a fixed
-6 GB of device memory. On an iPhone 11 Pro Max (4 GB), the GPU decodes
-at 22 tokens per second against 14 on the CPU, and answers its first
-token in 0.5 s against 2.3 s, at 1.2 GB of footprint against 0.6 GB.
+Runs Gemma on the GPU only on Apple GPU family 7 (A14) and later, and
+only when loading it there leaves the app at least 1.5 GB from its
+memory limit. Everything else runs on the CPU.
 
-Developer launch arguments pick the backend and the CPU thread count
-(-BuiltInAIGemmaBackend, -BuiltInAIGemmaThreads), and keep the device
+On an A13 (family 6, iPhone 11 Pro Max), LiteRT-LM's Metal backend runs
+at about 20 tokens per second and produces random tokens, with 16-bit
+and 32-bit activations alike. The CPU answers correctly there at 14
+tokens per second, first token after 2.5 s, at 0.6 GB of footprint. The
+GPU is correct on M-series Macs, and the model card measures it on an
+A19 Pro.
+
+Developer launch arguments pick the backend, the CPU thread count, and
+the activation precision (-BuiltInAIGemmaBackend,
+-BuiltInAIGemmaThreads, -BuiltInAIGemmaActivation), and keep the device
 awake while Chrome is in front (-BuiltInAIKeepAwake). After every
-answer, Gemma's speed and the app's memory footprint go to
-Library/Caches/BuiltInAI/stats.jsonl.
+answer, Gemma's speed, the start of the answer, and the app's memory
+footprint go to Library/Caches/BuiltInAI/stats.jsonl.
 ---
- .../model/built_in_ai_engine.swift            | 122 +++++++++++++++++-
+ ios/chrome/browser/built_in_ai/model/BUILD.gn |   1 +
+ .../model/built_in_ai_engine.swift            | 153 +++++++++++++++++-
  .../model/built_in_ai_java_script_feature.h   |   4 +
  .../model/built_in_ai_java_script_feature.mm  |  13 ++
- 3 files changed, 135 insertions(+), 4 deletions(-)
+ 4 files changed, 166 insertions(+), 5 deletions(-)
 
+diff --git a/ios/chrome/browser/built_in_ai/model/BUILD.gn b/ios/chrome/browser/built_in_ai/model/BUILD.gn
+index fbc9a9410f4cf..b693312784fc1 100644
+--- a/ios/chrome/browser/built_in_ai/model/BUILD.gn
++++ b/ios/chrome/browser/built_in_ai/model/BUILD.gn
+@@ -40,6 +40,7 @@ swift_source_set("engine_swift") {
+     "CoreGraphics.framework",
+     "Foundation.framework",
+     "ImageIO.framework",
++    "Metal.framework",
+     "UIKit.framework",
+   ]
+ 
 diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
-index 6546e5d17127d..10bf1587aa647 100644
+index 6546e5d17127d..3dfbf72676ea4 100644
 --- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
 +++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
-@@ -782,11 +782,18 @@ final class AISession: @unchecked Sendable {
+@@ -48,6 +48,9 @@ import ImageIO
+ #if canImport(UIKit)
+   import UIKit
+ #endif
++#if canImport(Metal)
++  import Metal
++#endif
+ 
+ // MARK: - Public entry point
+ 
+@@ -782,11 +785,18 @@ final class AISession: @unchecked Sendable {
        }
  
        var text = ""
@@ -44,17 +73,17 @@ index 6546e5d17127d..10bf1587aa647 100644
            text += delta
            // JSON goes out whole, like Apple's, once it is complete.
            if format == nil { onChunk?(delta) }
-@@ -802,6 +809,9 @@ final class AISession: @unchecked Sendable {
+@@ -802,6 +812,9 @@ final class AISession: @unchecked Sendable {
            last.fingerprint, ChatMessage(role: .model, parts: [.text(text)]).fingerprint,
          ])
        let usage = (try? conversation.getTokenCount()) ?? (text.count + 3) / 4
 +      GemmaStats.record(
 +        started: started, firstChunk: firstChunk, lastChunk: lastChunk, chunks: chunks,
-+        contextTokens: usage)
++        contextTokens: usage, sample: String(text.prefix(120)))
        return GenerationOutput(text: text, usage: usage)
      }
  
-@@ -1048,9 +1058,11 @@ final class GemmaModelStore: @unchecked Sendable {
+@@ -1048,9 +1061,11 @@ final class GemmaModelStore: @unchecked Sendable {
    )!
    /// Context window for Gemma sessions. The KV cache grows with it.
    static let contextWindow = 4096
@@ -68,7 +97,7 @@ index 6546e5d17127d..10bf1587aa647 100644
    static let gpuPhysicalMemory: UInt64 = 6_000_000_000
  
    enum State {
-@@ -1184,6 +1196,9 @@ final class GemmaModelStore: @unchecked Sendable {
+@@ -1184,6 +1199,9 @@ final class GemmaModelStore: @unchecked Sendable {
      static let idleUnloadDelay: UInt64 = 60_000_000_000
  
      private var loading: Task<Engine, Error>?
@@ -78,19 +107,15 @@ index 6546e5d17127d..10bf1587aa647 100644
      private var users = 0
      private var generation = 0
  
-@@ -1230,9 +1245,45 @@ final class GemmaModelStore: @unchecked Sendable {
+@@ -1230,9 +1248,66 @@ final class GemmaModelStore: @unchecked Sendable {
        }
      }
  
-+    /// The backend the model runs on: the GPU whenever the app has the memory
-+    /// for it, the CPU otherwise. Developers can override it with launch
-+    /// arguments, `-BuiltInAIGemmaBackend cpu|gpu|auto` and
-+    /// `-BuiltInAIGemmaThreads <n>`, which end up in the argument domain of the
-+    /// user defaults.
-+    ///
-+    /// On an iPhone 11 Pro Max (4 GB), the GPU decodes at 22 tokens per second
-+    /// and answers its first token in 0.5 s, the CPU at 14 and in 2.3 s. The
-+    /// GPU costs 1.2 GB of footprint against 0.6 GB on the CPU.
++    /// The backend the model runs on: the GPU where it computes correctly and
++    /// the app has the memory for it, the CPU otherwise. Developers can
++    /// override it with launch arguments, `-BuiltInAIGemmaBackend
++    /// cpu|gpu|auto` and `-BuiltInAIGemmaThreads <n>`, which end up in the
++    /// argument domain of the user defaults.
 +    static var backend: Backend {
 +      let defaults = UserDefaults.standard
 +      let threads = defaults.integer(forKey: "BuiltInAIGemmaThreads")
@@ -98,8 +123,33 @@ index 6546e5d17127d..10bf1587aa647 100644
 +      switch defaults.string(forKey: "BuiltInAIGemmaBackend") {
 +      case "cpu": return cpu
 +      case "gpu": return .gpu
-+      default: return hasRoomForGPU ? .gpu : cpu
++      default: return gpuIsSupported && hasRoomForGPU ? .gpu : cpu
 +      }
++    }
++
++    /// The precision of the activations, the engine's default unless a developer
++    /// overrides it with `-BuiltInAIGemmaActivation f16|f32`.
++    static var activationDataType: ActivationDataType? {
++      switch UserDefaults.standard.string(forKey: "BuiltInAIGemmaActivation") {
++      case "f16": return .float16
++      case "f32": return .float32
++      default: return nil
++      }
++    }
++
++    /// Whether LiteRT-LM's Metal backend computes Gemma correctly on this GPU.
++    ///
++    /// On an A13 (Apple GPU family 6, iPhone 11 Pro Max) it runs at 20 tokens
++    /// per second and produces random tokens, with 16-bit and 32-bit
++    /// activations alike, while the CPU answers correctly at 14 tokens per
++    /// second. The model card measures the GPU on an A19 Pro, and it is correct
++    /// on M-series Macs, so family 7 (A14) and later are taken to work.
++    static var gpuIsSupported: Bool {
++      #if canImport(Metal)
++        return MTLCreateSystemDefaultDevice()?.supportsFamily(.apple7) ?? false
++      #else
++        return false
++      #endif
 +    }
 +
 +    /// What the GPU backend needs on top of what the app already uses, with a
@@ -126,7 +176,16 @@ index 6546e5d17127d..10bf1587aa647 100644
        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
          .appendingPathComponent("BuiltInAI", isDirectory: true)
        try FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
-@@ -1247,6 +1298,69 @@ final class GemmaModelStore: @unchecked Sendable {
+@@ -1240,13 +1315,81 @@ final class GemmaModelStore: @unchecked Sendable {
+         engineConfig: try EngineConfig(
+           modelPath: GemmaModelStore.shared.modelURL.path, backend: backend,
+           visionBackend: backend, audioBackend: .cpu(),
+-          maxNumTokens: GemmaModelStore.contextWindow, cacheDir: caches.path))
++          maxNumTokens: GemmaModelStore.contextWindow, cacheDir: caches.path,
++          activationDataType: activationDataType))
+       try await engine.initialize()
+       return engine
+     }
    }
  #endif
  
@@ -136,14 +195,18 @@ index 6546e5d17127d..10bf1587aa647 100644
 +  /// developers to compare backends and settings on real devices.
 +  enum GemmaStats {
 +    static func record(
-+      started: Date, firstChunk: Date?, lastChunk: Date, chunks: Int, contextTokens: Int
++      started: Date, firstChunk: Date?, lastChunk: Date, chunks: Int, contextTokens: Int,
++      sample: String
 +    ) {
 +      var entry: [String: Any] = [
 +        "time": ISO8601DateFormatter().string(from: started),
 +        "backend": (GemmaRuntime.loadedBackend ?? GemmaRuntime.backend).rawValue,
 +        "threads": UserDefaults.standard.integer(forKey: "BuiltInAIGemmaThreads"),
++        "activation": UserDefaults.standard.string(forKey: "BuiltInAIGemmaActivation") ?? "default",
 +        "chunks": chunks,
 +        "contextTokens": contextTokens,
++        // The start of the answer, to tell real text from numeric garbage.
++        "sample": sample,
 +        "physicalMemoryMB": ProcessInfo.processInfo.physicalMemory >> 20,
 +      ]
 +      if let firstChunk {

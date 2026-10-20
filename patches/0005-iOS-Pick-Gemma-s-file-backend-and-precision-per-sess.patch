@@ -1,0 +1,609 @@
+From 42f59f1864a77ae660ae2dfb987cb3d4c713536f Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Tue, 20 Oct 2026 11:13:15 +0200
+Subject: [PATCH 5/5] [iOS] Pick Gemma's file, backend, and precision per
+ session
+
+Sessions that read only text run the text-only GPU file
+(gemma-4-E2B-it-gpu.litertlm) on the GPU from Apple GPU family 6 (A13)
+on, unless the multimodal file is already there and the GPU runs it.
+Sessions whose expectedInputs include images or audio run the
+multimodal file (gemma-4-E2B-it.litertlm), on the GPU from family 7
+(A14) on and on the CPU before that. Families 5 and older use the CPU,
+untested on the GPU. Each file downloads when a session first needs
+it, and one engine is loaded at a time.
+
+On an iPhone 11 Pro Max (A13, 4 GB): text on the GPU file at 22 tokens
+per second, 0.4 GB of footprint; an image session on the multimodal
+file on the CPU at 14 tokens per second, describing the image
+correctly. The multimodal file on the A13 GPU produces random tokens.
+On family 7, where 16-bit activations corrupt digits (LiteRT-LM issues
+2814 and 3913), the multimodal file runs with 32-bit activations.
+
+Text-only files get no encoders configured, which made their
+conversations fail to start.
+---
+ .../model/built_in_ai_engine.swift            | 387 +++++++++++-------
+ 1 file changed, 249 insertions(+), 138 deletions(-)
+
+diff --git a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+index 3dfbf72676ea4..acffb9c564a09 100644
+--- a/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
++++ b/ios/chrome/browser/built_in_ai/model/built_in_ai_engine.swift
+@@ -202,9 +202,9 @@ struct BuiltInAIError: Error {
+ struct ModelRequirements {
+   var inputTypes: Set<String> = ["text"]
+   var languages: [String] = []
+-  /// "auto", "apple", or "gemma". Pages never set this; the browser does, for
+-  /// testing and for a user setting.
+-  var preferredBackend = "auto"
++  /// "auto", "apple", or "gemma". Pages never set this. Developers can, with
++  /// the launch argument `-BuiltInAIBackend apple|gemma|auto`.
++  var preferredBackend = UserDefaults.standard.string(forKey: "BuiltInAIBackend") ?? "auto"
+ 
+   init(_ options: [String: Any]?) {
+     guard let options else { return }
+@@ -301,12 +301,12 @@ actor EngineCore {
+       }
+       let options = request.body["options"] as? [String: Any] ?? [:]
+       let requirements = ModelRequirements(options)
+-      let backend = try await Router.prepare(
++      let (backend, plan) = try await Router.prepare(
+         for: requirements,
+         userActivated: request.body["userActivated"] as? Bool ?? false,
+         progress: { request.progress($0) })
+       try Task.checkCancellation()
+-      let session = try AISession(backend: backend, options: options)
++      let session = try AISession(backend: backend, gemmaPlan: plan, options: options)
+       sessions[key] = session
+       request.result([
+         "backend": backend.rawValue,
+@@ -375,14 +375,14 @@ enum Router {
+   static func prepare(
+     for requirements: ModelRequirements, userActivated: Bool,
+     progress: @escaping @Sendable (Double) -> Void
+-  ) async throws -> BackendKind {
++  ) async throws -> (BackendKind, GemmaPlan?) {
+     var downloadable: BackendKind?
+     for kind in order(requirements.preferredBackend) {
+       switch await availability(of: kind, for: requirements) {
+       case .available:
+         progress(0)
+         progress(1)
+-        return kind
++        return (kind, kind == .gemma ? GemmaPlanner.plan(for: requirements) : nil)
+       case .downloading, .downloadable:
+         if downloadable == nil { downloadable = kind }
+       case .unavailable:
+@@ -399,15 +399,19 @@ enum Router {
+       progress(0)
+       try await AppleModel.waitUntilReady()
+       progress(1)
++      return (kind, nil)
+     case .gemma:
+-      let state = await GemmaModelStore.shared.state
+-      if case .absent = state, !userActivated {
++      guard let plan = GemmaPlanner.plan(for: requirements) else {
++        throw BuiltInAIError.notSupported("Gemma does not support these options here.")
++      }
++      let store = GemmaModelStore.shared
++      if case .absent = store.state(of: plan.file), !userActivated {
+         throw BuiltInAIError.notAllowed(
+           "Downloading the model requires a user gesture.")
+       }
+-      try await GemmaModelStore.shared.ensureDownloaded(progress: progress)
++      try await store.ensureDownloaded(plan.file, progress: progress)
++      return (kind, plan)
+     }
+-    return kind
+   }
+ 
+   private static func order(_ preferred: String) -> [BackendKind] {
+@@ -595,6 +599,8 @@ struct GenerationOutput {
+ final class AISession: @unchecked Sendable {
+   let backend: BackendKind
+   let contextWindow: Int
++  /// How Gemma runs for this session, when it does.
++  let gemmaPlan: GemmaPlan?
+   private let instructions: String?
+   private let temperature: Double?
+   private let topK: Int?
+@@ -603,8 +609,9 @@ final class AISession: @unchecked Sendable {
+   private var running: Set<Task<GenerationOutput, Error>> = []
+   private var cached: (session: AnyObject, fingerprint: [String])?
+ 
+-  init(backend: BackendKind, options: [String: Any]) throws {
++  init(backend: BackendKind, gemmaPlan: GemmaPlan?, options: [String: Any]) throws {
+     self.backend = backend
++    self.gemmaPlan = gemmaPlan
+     self.instructions = options["systemInstruction"] as? String
+     self.temperature = (options["temperature"] as? NSNumber)?.doubleValue
+     self.topK = (options["topK"] as? NSNumber)?.intValue
+@@ -760,7 +767,10 @@ final class AISession: @unchecked Sendable {
+       if let reused = takeCached(matching: history) as? Conversation, reused.isAlive {
+         conversation = reused
+       } else {
+-        let engine = try await GemmaRuntime.shared.engine()
++        guard let plan = gemmaPlan else {
++          throw BuiltInAIError.invalidState("The session has no Gemma plan.")
++        }
++        let engine = try await GemmaRuntime.shared.engine(for: plan)
+         let system = systemText(contents.messages)
+         conversation = try await engine.createConversation(
+           with: ConversationConfig(
+@@ -813,8 +823,8 @@ final class AISession: @unchecked Sendable {
+         ])
+       let usage = (try? conversation.getTokenCount()) ?? (text.count + 3) / 4
+       GemmaStats.record(
+-        started: started, firstChunk: firstChunk, lastChunk: lastChunk, chunks: chunks,
+-        contextTokens: usage, sample: String(text.prefix(120)))
++        plan: gemmaPlan, started: started, firstChunk: firstChunk, lastChunk: lastChunk,
++        chunks: chunks, contextTokens: usage, sample: String(text.prefix(120)))
+       return GenerationOutput(text: text, usage: usage)
+     }
+ 
+@@ -1049,20 +1059,157 @@ final class AISession: @unchecked Sendable {
+ 
+ // MARK: - Gemma 4
+ 
+-/// Downloads Gemma 4 E2B once into the app container and loads it for every
+-/// session that needs it.
++/// A Gemma 4 E2B file of the `litert-community/gemma-4-E2B-it-litert-lm` repo.
++struct GemmaFile: Hashable, Sendable {
++  /// The file name, in the repo and in the app's container.
++  let name: String
++  /// Whether it has the vision and audio encoders.
++  let isMultimodal: Bool
++  /// Whether it runs on the CPU. The GPU files use LiteRT-LM's Metal
++  /// executor only.
++  let runsOnCPU: Bool
++  /// What the GPU backend needs on top of what the app already uses, with a
++  /// margin for the pages that keep running next to it.
++  let gpuMemoryNeeded: UInt64
++
++  /// Text, images, and audio, on the CPU or on GPUs of family 7 and later.
++  /// 2.6 GB. On the GPU, 1.2 GB of footprint.
++  static let multimodal = GemmaFile(
++    name: "gemma-4-E2B-it.litertlm", isMultimodal: true, runsOnCPU: true,
++    gpuMemoryNeeded: 1_500_000_000)
++  /// Text, on the GPU only, including family 6. 2.0 GB. 0.4 GB of footprint.
++  static let text = GemmaFile(
++    name: "gemma-4-E2B-it-gpu.litertlm", isMultimodal: false, runsOnCPU: false,
++    gpuMemoryNeeded: 1_000_000_000)
++
++  /// Another file of the repo, for the `-BuiltInAIGemmaModelFile` override.
++  /// Every file other than the multimodal one is a text-only GPU file.
++  static func named(_ name: String) -> GemmaFile {
++    if name == multimodal.name { return multimodal }
++    return GemmaFile(
++      name: name, isMultimodal: false, runsOnCPU: false,
++      gpuMemoryNeeded: text.gpuMemoryNeeded)
++  }
++
++  var remoteURL: URL {
++    URL(string: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/")!
++      .appendingPathComponent(name)
++  }
++}
++
++/// How one session runs Gemma.
++struct GemmaPlan: Hashable, Sendable {
++  let file: GemmaFile
++  let onGPU: Bool
++  /// CPU threads; nil for LiteRT-LM's default.
++  let threads: Int?
++  /// "f16" or "f32"; nil for LiteRT-LM's default, which is 16-bit on the GPU.
++  let activation: String?
++}
++
++/// Picks the Gemma file, backend, and precision for a session.
++///
++/// What the session needs to read comes from its `expectedInputs`, which the
++/// Prompt API fixes at `create()`. What works where was measured and reported:
++///
++/// | GPU family       | Multimodal file on the GPU                         |
++/// | ---------------- | -------------------------------------------------- |
++/// | 6 (A13)          | random tokens, at 16 and 32 bits (measured)        |
++/// | 7 (A14, M1)      | digits slip at 16 bits, also in short contexts     |
++/// | 8 (A15, A16, M2) | correct, digits slip at 16 bits in long contexts   |
++/// | 9, 10 (M4, A19)  | correct below 2,048 tokens                         |
++///
++/// The text-only GPU file runs correctly on family 6: 21 tokens per second and
++/// 0.4 GB of footprint on an iPhone 11 Pro Max, against 14 tokens per second
++/// for the multimodal file on its CPU. Reports: LiteRT-LM issues 2814 and
++/// 3913. Families 5 and older are untested on the GPU and use the CPU.
++enum GemmaPlanner {
++  static func plan(for requirements: ModelRequirements) -> GemmaPlan? {
++    guard GemmaModelStore.isSupported else { return nil }
++    let defaults = UserDefaults.standard
++    let threads = defaults.integer(forKey: "BuiltInAIGemmaThreads")
++    let activationOverride = defaults.string(forKey: "BuiltInAIGemmaActivation").flatMap {
++      ["f16", "f32"].contains($0) ? $0 : nil
++    }
++    let backendOverride = defaults.string(forKey: "BuiltInAIGemmaBackend")
++    let needsMedia = !requirements.inputTypes.isSubset(of: ["text"])
++    let family = gpuFamily
++    let store = GemmaModelStore.shared
++
++    var file: GemmaFile
++    var onGPU: Bool
++    if let name = fileOverride {
++      file = .named(name)
++      onGPU =
++        backendOverride == "gpu" || !file.runsOnCPU
++        || (backendOverride != "cpu" && family >= 7 && hasRoom(for: file))
++    } else if backendOverride == "cpu" {
++      (file, onGPU) = (.multimodal, false)
++    } else if needsMedia {
++      onGPU = backendOverride == "gpu" || (family >= 7 && hasRoom(for: .multimodal))
++      file = .multimodal
++    } else if backendOverride == "gpu" || (family >= 6 && hasRoom(for: .text)) {
++      // On GPUs that run the multimodal file, it serves text, too, rather than
++      // making a page wait for a second download.
++      let reuse =
++        family >= 7 && store.isPresent(.multimodal) && !store.isPresent(.text)
++        && hasRoom(for: .multimodal)
++      (file, onGPU) = (reuse ? .multimodal : .text, true)
++    } else {
++      (file, onGPU) = (.multimodal, false)
++    }
++    if needsMedia, !file.isMultimodal { return nil }
++    if !onGPU, !file.runsOnCPU { return nil }
++
++    // 32 bits where 16 corrupts digits even in short contexts.
++    let activation = activationOverride ?? (onGPU && file.isMultimodal && family == 7 ? "f32" : nil)
++    return GemmaPlan(
++      file: file, onGPU: onGPU, threads: onGPU || threads <= 0 ? nil : threads,
++      activation: activation)
++  }
++
++  /// `-BuiltInAIGemmaModelFile <name>`, a plain file name of the repo.
++  static var fileOverride: String? {
++    let name = UserDefaults.standard.string(forKey: "BuiltInAIGemmaModelFile") ?? ""
++    return !name.isEmpty && !name.contains("/") && !name.hasPrefix(".") ? name : nil
++  }
++
++  /// The Apple GPU family, 0 where there is none or it is unknown.
++  static let gpuFamily: Int = {
++    #if canImport(Metal)
++      guard let device = MTLCreateSystemDefaultDevice() else { return 0 }
++      let families: [(MTLGPUFamily, Int)] = [
++        (.apple9, 9), (.apple8, 8), (.apple7, 7), (.apple6, 6), (.apple5, 5),
++        (.apple4, 4), (.apple3, 3), (.apple2, 2), (.apple1, 1),
++      ]
++      if #available(iOS 26.0, macOS 26.0, *), device.supportsFamily(.apple10) { return 10 }
++      return families.first { device.supportsFamily($0.0) }?.1 ?? 0
++    #else
++      return 0
++    #endif
++  }()
++
++  /// Whether loading `file` on the GPU leaves the app safely below the limit
++  /// iOS kills it at.
++  static func hasRoom(for file: GemmaFile) -> Bool {
++    #if os(iOS)
++      // How far the app is from that limit. It counts the increased memory
++      // limit entitlement, and what the app uses already.
++      return UInt64(os_proc_available_memory()) >= file.gpuMemoryNeeded
++    #else
++      return ProcessInfo.processInfo.physicalMemory >= GemmaModelStore.gpuPhysicalMemory
++    #endif
++  }
++}
++
++/// Downloads Gemma files into the app container, each once, as sessions
++/// first need them.
+ final class GemmaModelStore: @unchecked Sendable {
+   static let shared = GemmaModelStore()
+ 
+-  static let fileName = "gemma-4-E2B-it.litertlm"
+-  static let remoteURL = URL(
+-    string:
+-      "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+-  )!
+   /// Context window for Gemma sessions. The KV cache grows with it.
+   static let contextWindow = 4096
+-  /// Gemma 4 E2B takes about 0.6 GB of footprint on the CPU and 1.2 GB on the
+-  /// GPU, on top of its memory-mapped embeddings.
++  /// Below this, Gemma does not run at all.
+   static let minimumPhysicalMemory: UInt64 = 3_500_000_000
+   /// Where there is no per-app memory limit to ask (macOS), the device size
+   /// from which the GPU is used.
+@@ -1074,11 +1221,15 @@ final class GemmaModelStore: @unchecked Sendable {
+     case ready
+   }
+ 
++  private struct Download {
++    var task: Task<Void, Error>
++    var fraction = 0.0
++    var listeners: [UUID: @Sendable (Double) -> Void] = [:]
++  }
++
+   private let lock = NSLock()
+   private var directoryOverride: URL?
+-  private var download: Task<Void, Error>?
+-  private var progressListeners: [UUID: @Sendable (Double) -> Void] = [:]
+-  private var fraction = 0.0
++  private var downloads: [String: Download] = [:]  // By file name.
+ 
+   var directory: URL {
+     get {
+@@ -1092,14 +1243,17 @@ final class GemmaModelStore: @unchecked Sendable {
+     set { lock.withLock { directoryOverride = newValue } }
+   }
+ 
+-  var modelURL: URL { directory.appendingPathComponent(Self.fileName) }
++  func url(of file: GemmaFile) -> URL { directory.appendingPathComponent(file.name) }
++
++  func isPresent(_ file: GemmaFile) -> Bool {
++    FileManager.default.fileExists(atPath: url(of: file).path)
++  }
+ 
+-  var state: State {
+-    get async {
+-      let downloading: Double? = lock.withLock { download != nil ? fraction : nil }
+-      if let downloading { return .downloading(downloading) }
+-      return FileManager.default.fileExists(atPath: modelURL.path) ? .ready : .absent
++  func state(of file: GemmaFile) -> State {
++    if let fraction = lock.withLock({ downloads[file.name]?.fraction }) {
++      return .downloading(fraction)
+     }
++    return isPresent(file) ? .ready : .absent
+   }
+ 
+   static var isSupported: Bool {
+@@ -1110,28 +1264,32 @@ final class GemmaModelStore: @unchecked Sendable {
+     #endif
+   }
+ 
++  /// Whether the file these options need is there, on its way, or to fetch.
+   func availability(for requirements: ModelRequirements) async -> Availability {
+-    guard Self.isSupported else { return .unavailable }
+-    // Gemma 4 E2B reads text, images, and audio, in 140 languages.
+-    switch await state {
++    guard let plan = GemmaPlanner.plan(for: requirements) else { return .unavailable }
++    switch state(of: plan.file) {
+     case .ready: return .available
+     case .downloading: return .downloading
+     case .absent: return .downloadable
+     }
+   }
+ 
+-  /// Downloads the model unless it is already there. Concurrent callers share
+-  /// one download and each get its progress.
+-  func ensureDownloaded(progress: @escaping @Sendable (Double) -> Void) async throws {
++  /// Downloads `file` unless it is already there. Concurrent callers share one
++  /// download and each get its progress.
++  func ensureDownloaded(
++    _ file: GemmaFile, progress: @escaping @Sendable (Double) -> Void
++  ) async throws {
+     let listener = UUID()
+-    let path = modelURL.path
++    let present = isPresent(file)
+     let joined: (task: Task<Void, Error>, fraction: Double)? = lock.withLock {
+-      if FileManager.default.fileExists(atPath: path), download == nil { return nil }
+-      progressListeners[listener] = progress
+-      if let download { return (download, fraction) }
+-      fraction = 0
+-      let task = Task { try await self.fetch() }
+-      download = task
++      if present, downloads[file.name] == nil { return nil }
++      if var download = downloads[file.name] {
++        download.listeners[listener] = progress
++        downloads[file.name] = download
++        return (download.task, download.fraction)
++      }
++      let task = Task { try await self.fetch(file) }
++      downloads[file.name] = Download(task: task, listeners: [listener: progress])
+       return (task, 0)
+     }
+     guard let (task, current) = joined else {
+@@ -1140,27 +1298,28 @@ final class GemmaModelStore: @unchecked Sendable {
+       return
+     }
+     progress(current)
+-    defer { _ = lock.withLock { progressListeners.removeValue(forKey: listener) } }
++    defer { lock.withLock { _ = downloads[file.name]?.listeners.removeValue(forKey: listener) } }
+     try await task.value
+     progress(1)
+   }
+ 
+-  private func report(_ value: Double) {
+-    let listeners = lock.withLock {
+-      fraction = value
+-      return Array(progressListeners.values)
++  private func report(_ value: Double, for file: GemmaFile) {
++    let listeners: [@Sendable (Double) -> Void] = lock.withLock {
++      downloads[file.name]?.fraction = value
++      return Array(downloads[file.name]?.listeners.values ?? [:].values)
+     }
+     listeners.forEach { $0(value) }
+   }
+ 
+-  /// Downloads the model, resuming whatever an earlier attempt left behind,
+-  /// and retrying a few times when the network fails.
+-  private func fetch() async throws {
+-    defer { lock.withLock { download = nil } }
++  /// Downloads `file`, resuming whatever an earlier attempt left behind, and
++  /// retrying a few times when the network fails.
++  private func fetch(_ file: GemmaFile) async throws {
++    defer { lock.withLock { _ = downloads.removeValue(forKey: file.name) } }
+     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++    var destination = url(of: file)
+     let download = ResumableDownload(
+-      url: Self.remoteURL, destination: modelURL,
+-      onProgress: { [weak self] in self?.report($0) })
++      url: file.remoteURL, destination: destination,
++      onProgress: { [weak self] in self?.report($0, for: file) })
+     var attempt = 0
+     while true {
+       do {
+@@ -1179,7 +1338,6 @@ final class GemmaModelStore: @unchecked Sendable {
+       }
+     }
+     // Re-downloadable, so keep it out of device backups.
+-    var destination = modelURL
+     var values = URLResourceValues()
+     values.isExcludedFromBackup = true
+     try? destination.setResourceValues(values)
+@@ -1190,18 +1348,17 @@ final class GemmaModelStore: @unchecked Sendable {
+ }
+ 
+ #if canImport(LiteRTLM)
+-  /// The loaded Gemma model, shared by every session. Loading takes seconds
+-  /// and the weights take most of a gigabyte, so there is only ever one.
++  /// The loaded Gemma model. Loading takes seconds and the weights take
++  /// hundreds of megabytes, so only one is loaded at a time: a session with
++  /// another plan replaces it, and the old engine goes once its conversations
++  /// are gone.
+   actor GemmaRuntime {
+     static let shared = GemmaRuntime()
+ 
+     /// How long the model stays loaded after its last session is gone.
+     static let idleUnloadDelay: UInt64 = 60_000_000_000
+ 
+-    private var loading: Task<Engine, Error>?
+-
+-    /// The backend the loaded model runs on, for the stats.
+-    nonisolated(unsafe) static var loadedBackend: Backend?
++    private var loaded: (plan: GemmaPlan, engine: Task<Engine, Error>)?
+     private var users = 0
+     private var generation = 0
+ 
+@@ -1233,90 +1390,42 @@ final class GemmaModelStore: @unchecked Sendable {
+     /// `generation`. The engine frees its memory once nothing references it.
+     func unloadIfIdle(generation: Int? = nil) {
+       guard users == 0, generation == nil || generation == self.generation else { return }
+-      loading = nil
++      loaded = nil
+     }
+ 
+-    func engine() async throws -> Engine {
+-      if let loading { return try await loading.value }
+-      let task = Task { try await Self.load() }
+-      loading = task
++    func engine(for plan: GemmaPlan) async throws -> Engine {
++      if let loaded, loaded.plan == plan { return try await loaded.engine.value }
++      let task = Task { try await Self.load(plan) }
++      loaded = (plan, task)
+       do {
+         return try await task.value
+       } catch {
+-        loading = nil
++        if loaded?.plan == plan { loaded = nil }
+         throw error
+       }
+     }
+ 
+-    /// The backend the model runs on: the GPU where it computes correctly and
+-    /// the app has the memory for it, the CPU otherwise. Developers can
+-    /// override it with launch arguments, `-BuiltInAIGemmaBackend
+-    /// cpu|gpu|auto` and `-BuiltInAIGemmaThreads <n>`, which end up in the
+-    /// argument domain of the user defaults.
+-    static var backend: Backend {
+-      let defaults = UserDefaults.standard
+-      let threads = defaults.integer(forKey: "BuiltInAIGemmaThreads")
+-      let cpu: Backend = .cpu(threadCount: threads > 0 ? threads : nil)
+-      switch defaults.string(forKey: "BuiltInAIGemmaBackend") {
+-      case "cpu": return cpu
+-      case "gpu": return .gpu
+-      default: return gpuIsSupported && hasRoomForGPU ? .gpu : cpu
+-      }
+-    }
+-
+-    /// The precision of the activations, the engine's default unless a developer
+-    /// overrides it with `-BuiltInAIGemmaActivation f16|f32`.
+-    static var activationDataType: ActivationDataType? {
+-      switch UserDefaults.standard.string(forKey: "BuiltInAIGemmaActivation") {
+-      case "f16": return .float16
+-      case "f32": return .float32
+-      default: return nil
+-      }
+-    }
+-
+-    /// Whether LiteRT-LM's Metal backend computes Gemma correctly on this GPU.
+-    ///
+-    /// On an A13 (Apple GPU family 6, iPhone 11 Pro Max) it runs at 20 tokens
+-    /// per second and produces random tokens, with 16-bit and 32-bit
+-    /// activations alike, while the CPU answers correctly at 14 tokens per
+-    /// second. The model card measures the GPU on an A19 Pro, and it is correct
+-    /// on M-series Macs, so family 7 (A14) and later are taken to work.
+-    static var gpuIsSupported: Bool {
+-      #if canImport(Metal)
+-        return MTLCreateSystemDefaultDevice()?.supportsFamily(.apple7) ?? false
+-      #else
+-        return false
+-      #endif
+-    }
+-
+-    /// What the GPU backend needs on top of what the app already uses, with a
+-    /// margin for the pages that keep running next to it.
+-    static let gpuMemoryNeeded: UInt64 = 1_500_000_000
+-
+-    /// Whether loading the model on the GPU leaves the app safely below the
+-    /// limit iOS kills it at.
+-    static var hasRoomForGPU: Bool {
+-      #if os(iOS)
+-        // How far the app is from that limit. It counts the increased memory
+-        // limit entitlement, and what the app uses already.
+-        return UInt64(os_proc_available_memory()) >= gpuMemoryNeeded
+-      #else
+-        return ProcessInfo.processInfo.physicalMemory >= GemmaModelStore.gpuPhysicalMemory
+-      #endif
+-    }
+-
+-    private static func load() async throws -> Engine {
+-      let backend = Self.backend
+-      loadedBackend = backend
++    private static func load(_ plan: GemmaPlan) async throws -> Engine {
++      let backend: Backend = plan.onGPU ? .gpu : .cpu(threadCount: plan.threads)
++      let activation: ActivationDataType? =
++        switch plan.activation {
++        case "f16": .float16
++        case "f32": .float32
++        default: nil
++        }
+       let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+         .appendingPathComponent("BuiltInAI", isDirectory: true)
+       try FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
++      let multimodal = plan.file.isMultimodal
+       let engine = Engine(
+         engineConfig: try EngineConfig(
+-          modelPath: GemmaModelStore.shared.modelURL.path, backend: backend,
+-          visionBackend: backend, audioBackend: .cpu(),
++          modelPath: GemmaModelStore.shared.url(of: plan.file).path, backend: backend,
++          // Text-only files have no encoders, and conversations fail to start
++          // when encoders are configured that the file lacks.
++          visionBackend: multimodal ? backend : nil,
++          audioBackend: multimodal ? .cpu() : nil,
+           maxNumTokens: GemmaModelStore.contextWindow, cacheDir: caches.path,
+-          activationDataType: activationDataType))
++          activationDataType: activation))
+       try await engine.initialize()
+       return engine
+     }
+@@ -1329,14 +1438,16 @@ final class GemmaModelStore: @unchecked Sendable {
+   /// developers to compare backends and settings on real devices.
+   enum GemmaStats {
+     static func record(
+-      started: Date, firstChunk: Date?, lastChunk: Date, chunks: Int, contextTokens: Int,
+-      sample: String
++      plan: GemmaPlan?, started: Date, firstChunk: Date?, lastChunk: Date, chunks: Int,
++      contextTokens: Int, sample: String
+     ) {
+       var entry: [String: Any] = [
+         "time": ISO8601DateFormatter().string(from: started),
+-        "backend": (GemmaRuntime.loadedBackend ?? GemmaRuntime.backend).rawValue,
+-        "threads": UserDefaults.standard.integer(forKey: "BuiltInAIGemmaThreads"),
+-        "activation": UserDefaults.standard.string(forKey: "BuiltInAIGemmaActivation") ?? "default",
++        "backend": plan?.onGPU == true ? "gpu" : "cpu",
++        "threads": plan?.threads ?? 0,
++        "activation": plan?.activation ?? "default",
++        "model": plan?.file.name ?? "-",
++        "gpuFamily": GemmaPlanner.gpuFamily,
+         "chunks": chunks,
+         "contextTokens": contextTokens,
+         // The start of the answer, to tell real text from numeric garbage.
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
