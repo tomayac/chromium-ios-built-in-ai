@@ -1,0 +1,159 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio Format Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --pass: #188038;
+        --fail: #c5221f;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td {
+        border-top: 1px solid #8884;
+        padding: 6px 4px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      td:first-child {
+        font-weight: 600;
+      }
+      .pass {
+        color: var(--pass);
+      }
+      .fail {
+        color: var(--fail);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Audio Format Check</h1>
+    <table>
+      <tbody id="results"></tbody>
+    </table>
+    <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
+      // The same sentence in the formats pages pass to the Prompt API: files
+      // as an ArrayBuffer or a Blob, and what MediaRecorder records, which is
+      // what a page gets from the microphone.
+      const results = document.querySelector('#results');
+      const rows = [];
+      const row = (name, ok, detail) => {
+        const tr = results.insertRow();
+        tr.insertCell().textContent = `${ok ? 'PASS' : 'FAIL'} ${name}`;
+        tr.insertCell().textContent = detail;
+        tr.className = ok ? 'pass' : 'fail';
+        rows.push({ check: tr.cells[0].textContent, detail });
+      };
+
+      const session = await LanguageModel.create({
+        expectedInputs: [{ type: 'text' }, { type: 'audio' }],
+      });
+      const check = async (name, value) => {
+        const started = performance.now();
+        try {
+          const answer = await session.clone().then((s) =>
+            s.prompt([
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    value:
+                      'Transcribe this audio. Reply with the transcription only.',
+                  },
+                  { type: 'audio', value },
+                ],
+              },
+            ]),
+          );
+          const ms = Math.round(performance.now() - started);
+          row(
+            name,
+            /quick brown fox/i.test(answer),
+            `${answer.trim()} (${ms} ms)`,
+          );
+        } catch (error) {
+          row(name, false, `${error.name}: ${error.message}`);
+        }
+      };
+      const file = async (name) => (await fetch(name)).blob();
+
+      // What MediaRecorder makes of the WAV, played into it in real time.
+      const record = async () => {
+        const context = new AudioContext();
+        // Without a tap, iOS may keep audio suspended, and nothing would play.
+        await Promise.race([
+          context.resume(),
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
+        if (context.state !== 'running') {
+          throw new DOMException(
+            `AudioContext is ${context.state}; tap the page and reload.`,
+            'NotAllowedError',
+          );
+        }
+        const buffer = await context.decodeAudioData(
+          await (await file('speech.wav')).arrayBuffer(),
+        );
+        const destination = context.createMediaStreamDestination();
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(destination);
+        const recorder = new MediaRecorder(destination.stream);
+        const chunks = [];
+        recorder.ondataavailable = ({ data }) => chunks.push(data);
+        recorder.start();
+        source.start();
+        await new Promise((resolve) => (source.onended = resolve));
+        recorder.stop();
+        await new Promise((resolve) => (recorder.onstop = resolve));
+        await context.close();
+        return new Blob(chunks, { type: recorder.mimeType });
+      };
+
+      const wav = await file('speech.wav');
+      const m4a = await file('speech.m4a');
+      const mp3 = await file('speech.mp3');
+      await check('WAV, ArrayBuffer', await wav.arrayBuffer());
+      await check('AAC (m4a), ArrayBuffer', await m4a.arrayBuffer());
+      await check('AAC (m4a), Blob', m4a);
+      await check('MP3, ArrayBuffer', await mp3.arrayBuffer());
+      try {
+        const recording = await record();
+        await check(
+          `MediaRecorder (${recording.type}), ArrayBuffer`,
+          await recording.arrayBuffer(),
+        );
+        await check(`MediaRecorder (${recording.type}), Blob`, recording);
+      } catch (error) {
+        row('MediaRecorder', false, `${error.name}: ${error.message}`);
+      }
+
+      document.title = 'Audio Format Check: done';
+      fetch('/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ env: navigator.userAgent, rows }),
+      }).catch(() => {});
+    </script>
+  </body>
+</html>
