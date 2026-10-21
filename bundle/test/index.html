@@ -61,6 +61,13 @@
   <body>
     <h1>Built-in AI Check</h1>
     <div class="muted" id="env"></div>
+    <p id="get-app" hidden>
+      This browser has no <code>LanguageModel</code>. On an iPhone or iPad,
+      <a href="https://testflight.apple.com/join/z28wgCRz"
+        >join the TestFlight beta</a
+      >
+      of Built-In AI Browser, which has the built-in AI APIs.
+    </p>
     <button id="run">Run checks</button>
     <progress id="progress" value="0" max="1" hidden></progress>
     <table>
@@ -80,6 +87,7 @@
           'LanguageDetector',
         ].map((name) => `${name}: ${name in self ? 'yes' : 'no'}`),
       ].join(' · ');
+      document.querySelector('#get-app').hidden = 'LanguageModel' in self;
 
       const row = (name, ok, detail) => {
         const tr = document.createElement('tr');

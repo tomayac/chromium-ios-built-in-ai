@@ -15,13 +15,19 @@ happens on the device:
 
 ## Installing
 
-Install the app on an iPhone through [AltStore](https://altstore.io) or
+**[Join the TestFlight beta](https://testflight.apple.com/join/z28wgCRz)** on an
+iPhone or iPad with iOS 18 or later. It installs through Apple's TestFlight app,
+and needs no developer account.
+
+The app also installs through [AltStore](https://altstore.io) or
 [SideStore](https://sidestore.io), with any Apple ID, free ones included: open
 the [install page](https://tomayac.github.io/chromium-ios-built-in-ai/altstore/)
 on the iPhone and add the source, or add
 `https://tomayac.github.io/chromium-ios-built-in-ai/altstore/source.json` by
-hand. The [test pages](https://tomayac.github.io/chromium-ios-built-in-ai/)
-exercise the APIs.
+hand.
+
+The [test pages](https://tomayac.github.io/chromium-ios-built-in-ai/) exercise
+the APIs.
 
 ## Gemma files and backends
 
