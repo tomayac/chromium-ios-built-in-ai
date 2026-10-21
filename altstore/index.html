@@ -177,23 +177,10 @@
       </p>
 
       <div class="buttons">
-        <a class="button" href="https://testflight.apple.com/join/z28wgCRz"
-          >Join the TestFlight beta</a
-        >
-      </div>
-      <p class="small">
-        The easiest way, on any iPhone or iPad with iOS 18 or later, through
-        Apple's TestFlight app. No Apple developer account needed.
-      </p>
-
-      <h2>Installing with AltStore or SideStore</h2>
-      <div class="buttons">
-        <a class="button secondary" id="altstore-pal" href="#" hidden
+        <a class="button" id="altstore-pal" href="#" hidden
           >Add to AltStore PAL</a
         >
-        <a class="button secondary" id="altstore" href="#"
-          >Add to AltStore Classic</a
-        >
+        <a class="button" id="altstore" href="#">Add to AltStore Classic</a>
         <a class="button secondary" id="sidestore" href="#">Add to SideStore</a>
       </div>
       <div class="source">
@@ -206,6 +193,7 @@
         <a id="ipa" href="#">.ipa</a> is also available on its own.
       </p>
 
+      <h2>Installing</h2>
       <ol>
         <li>
           Set up
@@ -221,11 +209,11 @@
         </li>
         <li>Tap the button for your installer above.</li>
         <li>Install <strong>Built-In AI Browser</strong> from the source.</li>
+        <li>
+          Open a page that uses the APIs, such as the
+          <a href="../">test pages</a>.
+        </li>
       </ol>
-      <p>
-        Either way, open a page that uses the APIs once the app is installed,
-        such as the <a href="../">test pages</a>.
-      </p>
 
       <h2>Things to know</h2>
       <ul>
@@ -236,9 +224,9 @@
           the files.
         </li>
         <li>
-          With AltStore Classic or SideStore, apps installed with a free Apple
-          ID stop opening after seven days unless the installer refreshes them.
-          A free Apple ID can have three sideloaded apps at a time.
+          Apps installed with a free Apple ID stop opening after seven days
+          unless AltStore or SideStore refreshes them. A free Apple ID can have
+          three sideloaded apps at a time.
         </li>
         <li>
           The app asks for the Increased Memory Limit capability, which gives
