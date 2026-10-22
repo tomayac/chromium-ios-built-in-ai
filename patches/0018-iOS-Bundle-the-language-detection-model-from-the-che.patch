@@ -1,0 +1,47 @@
+From aa3ee9d7af720a8f745ceb59b0dfb280ad9d1078 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Thu, 22 Oct 2026 13:01:01 +0200
+Subject: [PATCH 18/18] [iOS] Bundle the language detection model from the
+ checkout
+
+Chromium's test copy of the language detection model,
+components/test/data/translate/valid_model.tflite, is the model Chrome
+downloads, byte for byte. Blink's LanguageDetector now runs it by
+default, with no copy from a Chrome profile.
+---
+ ios/chrome/browser/built_in_ai/model/blink/.gitignore | 2 --
+ ios/chrome/browser/built_in_ai/model/blink/BUILD.gn   | 9 +++++----
+ 2 files changed, 5 insertions(+), 6 deletions(-)
+ delete mode 100644 ios/chrome/browser/built_in_ai/model/blink/.gitignore
+
+diff --git a/ios/chrome/browser/built_in_ai/model/blink/.gitignore b/ios/chrome/browser/built_in_ai/model/blink/.gitignore
+deleted file mode 100644
+index 9d51a1feff02d..0000000000000
+--- a/ios/chrome/browser/built_in_ai/model/blink/.gitignore
++++ /dev/null
+@@ -1,2 +0,0 @@
+-# Chrome's language detection model, see `ios_language_detection_model`.
+-/language_detection_model.tflite
+diff --git a/ios/chrome/browser/built_in_ai/model/blink/BUILD.gn b/ios/chrome/browser/built_in_ai/model/blink/BUILD.gn
+index 47658f7ff4674..3db65610fadca 100644
+--- a/ios/chrome/browser/built_in_ai/model/blink/BUILD.gn
++++ b/ios/chrome/browser/built_in_ai/model/blink/BUILD.gn
+@@ -7,10 +7,11 @@ import("//build/config/features.gni")
+ assert(use_blink, "Only the Blink-based web layer has Blink's AI APIs.")
+ 
+ declare_args() {
+-  # Chrome's language detection model, which Blink's LanguageDetector runs,
+-  # to bundle as `language_detection_model.tflite`. Chrome downloads it, so
+-  # Chromium has no copy. Without it, LanguageDetector is unavailable.
+-  ios_language_detection_model = ""
++  # The language detection model Blink's LanguageDetector runs, bundled as
++  # `language_detection_model.tflite`. Chromium's test copy is the model that
++  # Chrome downloads. Empty leaves LanguageDetector unavailable.
++  ios_language_detection_model =
++      "//components/test/data/translate/valid_model.tflite"
+ }
+ 
+ # Serves Blink's built-in AI APIs from the on-device models of the engine.
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

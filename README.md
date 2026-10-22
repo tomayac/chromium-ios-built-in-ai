@@ -145,7 +145,6 @@ ios_blink_single_process = true
 ios_chromium_bundle_id = "com.example.blink.ios.dev"
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"
-ios_language_detection_model = "//ios/chrome/browser/built_in_ai/model/blink/language_detection_model.tflite"
 ios_application_icons_target = "//ios/chrome/app/resources:built_in_ai_blink_icons"
 ```
 
@@ -156,9 +155,9 @@ through TestFlight to internal testers. App Review and notarization require the
 entitlement for an engine other than WebKit, so the public TestFlight link and
 AltStore PAL stay with the WebKit build.
 
-- **Language detection:** Chrome downloads its language detection model, so
-  Chromium has no copy. Copy it from a Chrome profile's
-  `optimization_guide_model_store/2/…/model.tflite` to the path above.
+- **Language detection:** Blink's LanguageDetector runs the model Chrome
+  downloads, of which Chromium has a copy as test data
+  (`components/test/data/translate/valid_model.tflite`). The build bundles it.
 - **Codecs:** `proprietary_codecs` lets Blink decode AAC (`.m4a`) audio for the
   Prompt API. Blink's `MediaRecorder` records WebM with Opus, which works
   without it.

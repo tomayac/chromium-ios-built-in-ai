@@ -1,7 +1,7 @@
 From 76d6295621b712d7f478d307896f28412b30b75f Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Thu, 22 Oct 2026 11:16:48 +0200
-Subject: [PATCH 14/17] [iOS] Serve Blink's built-in AI APIs from the on-device
+Subject: [PATCH 14/18] [iOS] Serve Blink's built-in AI APIs from the on-device
  models
 
 With `use_blink`, Blink has the built-in AI APIs itself and asks the

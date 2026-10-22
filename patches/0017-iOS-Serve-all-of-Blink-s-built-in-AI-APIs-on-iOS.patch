@@ -1,7 +1,7 @@
 From 9c134d41d893e2646637730a6a0623d8f0dd8aac Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Thu, 22 Oct 2026 12:37:11 +0200
-Subject: [PATCH 17/17] [iOS] Serve all of Blink's built-in AI APIs on iOS
+Subject: [PATCH 17/18] [iOS] Serve all of Blink's built-in AI APIs on iOS
 
 Summarizer, Writer, Rewriter, and Translator are served by the same
 engine as `LanguageModel`, prompted as the task API polyfills of

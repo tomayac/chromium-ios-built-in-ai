@@ -1,7 +1,7 @@
 From 54ec85d812992cdcf9c3b2e214f7b8695684a531 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Thu, 22 Oct 2026 11:52:58 +0200
-Subject: [PATCH 16/17] [iOS] Show pages when Blink runs in a single process
+Subject: [PATCH 16/18] [iOS] Show pages when Blink runs in a single process
 
 The GPU thread wraps its root layer in a BELayerHierarchy for the
 browser's view, which a GPU process sends over XPC. In a single process

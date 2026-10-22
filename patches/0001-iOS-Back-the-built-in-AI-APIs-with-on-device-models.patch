@@ -1,7 +1,7 @@
 From b36b8703ff505b67c27fb3faf4a6162bba5aca43 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Mon, 19 Oct 2026 17:11:18 +0200
-Subject: [PATCH 01/17] [iOS] Back the built-in AI APIs with on-device models
+Subject: [PATCH 01/18] [iOS] Back the built-in AI APIs with on-device models
 
 Exposes the Prompt API (`LanguageModel`) and the Summarizer, Writer,
 Rewriter, Translator, and LanguageDetector APIs to web pages in
