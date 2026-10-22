@@ -175,6 +175,16 @@
         Apple Foundation Models where the device has Apple Intelligence, and
         with Gemma 4 E2B everywhere else.
       </p>
+      <p>
+        The source has two apps. <strong>Built-In AI Browser</strong> uses
+        WebKit, as browsers on iOS do.
+        <strong>Built-In AI Browser (Blink)</strong> is an experiment with
+        Blink, Chromium's own engine, where the APIs are Blink's own. It runs
+        Blink in its own process and without JIT, so pages are not sandboxed
+        from the browser, and JavaScript is slower. Use it with sites you trust.
+        AltStore PAL only offers the WebKit app, since notarization requires
+        WebKit.
+      </p>
 
       <div class="buttons">
         <a class="button" id="altstore-pal" href="#" hidden
