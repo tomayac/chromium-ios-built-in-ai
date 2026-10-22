@@ -11,6 +11,13 @@
 # <out dir>/source.json, which lists the release under the download URL that
 # `RELEASE_URL_BASE` names, a GitHub release by default.
 #
+# A build of another app, such as the build with Blink, joins the same source
+# as an app of its own, set up from these on its first release:
+#   ALTSTORE_APP_NAME, ALTSTORE_APP_SUBTITLE, ALTSTORE_APP_DESCRIPTION,
+#   ALTSTORE_APP_ICON (a file next to source.json), ALTSTORE_APP_SCREENSHOTS
+#   (space-separated files next to source.json), and IPA_PREFIX for the name
+#   of the .ipa, since builds of both apps share their version.
+#
 # The .ipa is signed ad hoc: AltStore re-signs it with the tester's Apple ID,
 # and reads the entitlements it asks for from this signature. Nothing of the
 # development signing stays in it, neither the certificate nor the
@@ -29,7 +36,7 @@ VERSION=$(plist CFBundleShortVersionString "$APP/Info.plist")
 BUILD=$(plist CFBundleVersion "$APP/Info.plist")
 TAG="v$BUILD"
 RELEASE_URL_BASE=${RELEASE_URL_BASE:-https://github.com/$REPO/releases/download/$TAG}
-IPA_NAME="BuiltInAIBrowser-$BUILD.ipa"
+IPA_NAME="${IPA_PREFIX:-BuiltInAIBrowser}-$BUILD.ipa"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -100,16 +107,18 @@ else:
         'apps': [],
         'news': [],
     }
+env = os.environ.get
 apps = [a for a in source['apps'] if a['bundleIdentifier'] == bundle_id]
 if apps:
     app = apps[0]
 else:
     app = {
-        'name': 'Built-In AI Browser',
+        'name': env('ALTSTORE_APP_NAME', 'Built-In AI Browser'),
         'bundleIdentifier': bundle_id,
         'developerName': 'Thomas Steiner',
-        'subtitle': 'The built-in AI APIs on every page',
-        'localizedDescription': (
+        'subtitle': env('ALTSTORE_APP_SUBTITLE',
+                        'The built-in AI APIs on every page'),
+        'localizedDescription': env('ALTSTORE_APP_DESCRIPTION') or (
             'An experimental web browser for iOS where every '
             'web page can '
             'use LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, '
@@ -119,10 +128,13 @@ else:
             'use (2 to 2.6 GB) and shared by all sites.\n\n'
             'This is a personal experiment, and not an official Google '
             'product.'),
-        'iconURL': f'{pages}/icon.png',
+        'iconURL': f'{pages}/' + env('ALTSTORE_APP_ICON', 'icon.png'),
         'tintColor': '#1A73E8',
         'category': 'developer',
-        'screenshots': [f'{pages}/screenshot-{n}.png' for n in (1, 2)],
+        'screenshots': [
+            f'{pages}/{name}' for name in env(
+                'ALTSTORE_APP_SCREENSHOTS',
+                'screenshot-1.png screenshot-2.png').split()],
         'versions': [],
     }
     source['apps'].append(app)
