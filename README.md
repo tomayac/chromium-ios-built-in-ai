@@ -120,12 +120,64 @@ page ── LanguageModel / Summarizer / … (polyfills, page world)
                                └─ Gemma 4 E2B via LiteRT-LM
 ```
 
+## The build with Blink
+
+This branch also builds Chromium for iOS with Blink (`use_blink = true`), where
+the built-in AI APIs are Blink's own. Blink asks the browser for a
+`blink::mojom::AIManager`, a `TranslationManager`, and the language detection
+model, and the browser serves them from the same engine as the WebKit build:
+Apple Foundation Models where the device has Apple Intelligence, and Gemma 4
+otherwise. Summarizer, Writer, Rewriter, and Translator prompt the language
+model as the task API polyfills do, with prompts that
+`bundle/generate-task-prompts.mjs` takes from the polyfills. LanguageDetector
+runs Chrome's language detection model in Blink.
+
+Blink on iOS normally runs web content, the GPU, and the network in
+BrowserEngineKit extensions, which need browser engine entitlements that Apple
+grants only on request, and iOS checks them at install time, also for
+development builds. `ios_blink_single_process` runs Blink in the app's own
+process and without JIT, as on tvOS, so the app needs none of them:
+
+```gn
+target_environment = "device"
+use_blink = true
+ios_blink_single_process = true
+ios_chromium_bundle_id = "com.example.blink.ios.dev"
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
+ios_language_detection_model = "//ios/chrome/browser/built_in_ai/model/blink/language_detection_model.tflite"
+ios_application_icons_target = "//ios/chrome/app/resources:built_in_ai_blink_icons"
+```
+
+plus the arguments of the release build above. Web content then shares the
+browser's process, unsandboxed, and JavaScript runs interpreted. Such a build
+installs as a development build, through AltStore Classic or SideStore, and
+through TestFlight to internal testers. App Review and notarization require the
+entitlement for an engine other than WebKit, so the public TestFlight link and
+AltStore PAL stay with the WebKit build.
+
+- **Language detection:** Chrome downloads its language detection model, so
+  Chromium has no copy. Copy it from a Chrome profile's
+  `optimization_guide_model_store/2/…/model.tflite` to the path above.
+- **Codecs:** `proprietary_codecs` lets Blink decode AAC (`.m4a`) audio for the
+  Prompt API. Blink's `MediaRecorder` records WebM with Opus, which works
+  without it.
+- **Testing:** `--remote-debugging-port=9333` serves DevTools. In the simulator
+  it is on the Mac's localhost. On a device, `iproxy 9444:9333` (from Homebrew's
+  `libimobiledevice`) forwards it over USB. `ios-tools/cdp.mjs` loads pages and
+  evaluates in them, and `--autoplay-policy=no-user-gesture-required` lets test
+  pages start audio without a tap.
+
+On an iPhone 11 Pro Max, `bundle/test/apis.html`, `multimodal.html`, and
+`audio-formats.html` pass with Gemma, and Gemma streams at about 22 tokens per
+second on the GPU, as in the WebKit build.
+
 ## Repository layout
 
 - `patches/`: the Chromium change, as `git format-patch` output. It applies to
   Chromium `main` as of October 2026.
-- `bundle/`: builds the polyfill script that Chromium injects, and a test page
-  for the APIs.
+- `bundle/`: builds the polyfill script that Chromium injects, generates the
+  task API prompts for the build with Blink, and has test pages for the APIs.
 - `ios-tools/`: provisions a device build through the App Store Connect API,
   with no Xcode UI involved, and releases builds for AltStore and TestFlight.
 - `altstore/`: the AltStore source and its install page.

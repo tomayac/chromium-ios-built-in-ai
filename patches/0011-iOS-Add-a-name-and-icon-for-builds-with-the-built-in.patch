@@ -1,7 +1,7 @@
 From 803ad0736a22ed8c2e0ab3880e359e6132ae3007 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 16:32:21 +0200
-Subject: [PATCH 11/13] [iOS] Add a name and icon for builds with the built-in
+Subject: [PATCH 11/17] [iOS] Add a name and icon for builds with the built-in
  AI APIs
 
 Builds distributed to testers through TestFlight and AltStore should

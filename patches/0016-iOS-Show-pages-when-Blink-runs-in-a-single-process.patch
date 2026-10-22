@@ -1,0 +1,171 @@
+From 54ec85d812992cdcf9c3b2e214f7b8695684a531 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Thu, 22 Oct 2026 11:52:58 +0200
+Subject: [PATCH 16/17] [iOS] Show pages when Blink runs in a single process
+
+The GPU thread wraps its root layer in a BELayerHierarchy for the
+browser's view, which a GPU process sends over XPC. In a single process
+nothing took it, so pages rendered but never showed. The in-process GPU
+thread now hands it to the view on the main thread, the way the browser
+does for a GPU process. On an iPhone this works without the browser
+engine entitlements.
+---
+ content/gpu/BUILD.gn                          |  5 ++++
+ content/gpu/DEPS                              |  3 +++
+ content/gpu/in_process_gpu_thread.cc          | 22 ++++++++++++++++-
+ ui/accelerated_widget_mac/BUILD.gn            |  1 +
+ .../be_layer_hierarchy_host.h                 | 24 +++++++++++++++++++
+ .../ca_layer_frame_sink_provider.mm           | 19 +++++++++++++++
+ 6 files changed, 73 insertions(+), 1 deletion(-)
+ create mode 100644 ui/accelerated_widget_mac/be_layer_hierarchy_host.h
+
+diff --git a/content/gpu/BUILD.gn b/content/gpu/BUILD.gn
+index 19e7f3c36f275..971f902e7076c 100644
+--- a/content/gpu/BUILD.gn
++++ b/content/gpu/BUILD.gn
+@@ -96,6 +96,11 @@ target(link_target_type, "gpu_sources") {
+     ]
+   }
+ 
++  if (is_ios) {
++    # Hosts the GPU's layers in the browser's view when it runs in-process.
++    deps += [ "//ui/accelerated_widget_mac" ]
++  }
++
+   if (is_android) {
+     deps += [
+       "//components/tracing:graphics_provider",
+diff --git a/content/gpu/DEPS b/content/gpu/DEPS
+index aff5ffe833fbd..3a1a6242fa8f0 100644
+--- a/content/gpu/DEPS
++++ b/content/gpu/DEPS
+@@ -21,6 +21,9 @@ include_rules = [
+ # TODO(crbug.com/41326135): Dependencies on ozone should be removed, as content
+ # embedded in mus won't be able to talk to the native ozone.
+ specific_include_rules = {
++  "in_process_gpu_thread\\.cc": [
++    "+ui/accelerated_widget_mac/be_layer_hierarchy_host.h",
++  ],
+   "browser_exposed_gpu_interfaces\\.cc": [
+     "+ui/ozone/public/ozone_platform.h",
+   ],
+diff --git a/content/gpu/in_process_gpu_thread.cc b/content/gpu/in_process_gpu_thread.cc
+index 032d70ce65fbc..22c8f740a0197 100644
+--- a/content/gpu/in_process_gpu_thread.cc
++++ b/content/gpu/in_process_gpu_thread.cc
+@@ -27,7 +27,12 @@
+ #endif
+ 
+ #if BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS)
++#include <dispatch/dispatch.h>
++
++#include <memory>
++
+ #include "gpu/ipc/common/ios/be_layer_hierarchy_transport.h"
++#include "ui/accelerated_widget_mac/be_layer_hierarchy_host.h"
+ #endif
+ 
+ namespace content {
+@@ -51,7 +56,22 @@ class InProcessGpuThread::BELayerHierarchyTransportImpl
+   void ForwardBELayerHierarchyToBrowser(
+       gpu::SurfaceHandle surface_handle,
+       xpc_object_t ipc_representation) override {
+-    // Nothing to do.
++    // The browser is this process: the layers go to its view right here, as
++    // they would when a GPU process sends them.
++    struct Layers {
++      gpu::SurfaceHandle view_handle;
++      xpc_object_t representation;
++    };
++    xpc_retain(ipc_representation);
++    dispatch_async_f(dispatch_get_main_queue(),
++                     new Layers{surface_handle, ipc_representation},
++                     [](void* context) {
++                       std::unique_ptr<Layers> layers(
++                           static_cast<Layers*>(context));
++                       UIHostBELayerHierarchy(layers->view_handle,
++                                              layers->representation);
++                       xpc_release(layers->representation);
++                     });
+   }
+ };
+ #endif
+diff --git a/ui/accelerated_widget_mac/BUILD.gn b/ui/accelerated_widget_mac/BUILD.gn
+index daa300a59ab92..1bfbb35664d42 100644
+--- a/ui/accelerated_widget_mac/BUILD.gn
++++ b/ui/accelerated_widget_mac/BUILD.gn
+@@ -39,6 +39,7 @@ component("accelerated_widget_mac") {
+     ]
+ 
+     if (target_platform == "iphoneos") {
++      sources += [ "be_layer_hierarchy_host.h" ]
+       frameworks += [ "BrowserEngineKit.framework" ]
+     }
+ 
+diff --git a/ui/accelerated_widget_mac/be_layer_hierarchy_host.h b/ui/accelerated_widget_mac/be_layer_hierarchy_host.h
+new file mode 100644
+index 0000000000000..9d41e10704c02
+--- /dev/null
++++ b/ui/accelerated_widget_mac/be_layer_hierarchy_host.h
+@@ -0,0 +1,24 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_ACCELERATED_WIDGET_MAC_BE_LAYER_HIERARCHY_HOST_H_
++#define UI_ACCELERATED_WIDGET_MAC_BE_LAYER_HIERARCHY_HOST_H_
++
++#include <stdint.h>
++#include <xpc/xpc.h>
++
++#include "ui/accelerated_widget_mac/accelerated_widget_mac_export.h"
++
++// Shows the layer hierarchy that `xpc_representation` describes in the view
++// whose handle is `view_handle`, as the browser does when a GPU process sends
++// it one. For a GPU that runs in the browser's own process. Call on the main
++// thread.
++//
++// C linkage, since `xpc_object_t` is a different type in C++ and in
++// Objective-C, which C++ name mangling would tell apart.
++extern "C" ACCELERATED_WIDGET_MAC_EXPORT void UIHostBELayerHierarchy(
++    uint64_t view_handle,
++    xpc_object_t xpc_representation);
++
++#endif  // UI_ACCELERATED_WIDGET_MAC_BE_LAYER_HIERARCHY_HOST_H_
+diff --git a/ui/accelerated_widget_mac/ca_layer_frame_sink_provider.mm b/ui/accelerated_widget_mac/ca_layer_frame_sink_provider.mm
+index 432e90797d2d3..fc2f2cd673f9c 100644
+--- a/ui/accelerated_widget_mac/ca_layer_frame_sink_provider.mm
++++ b/ui/accelerated_widget_mac/ca_layer_frame_sink_provider.mm
+@@ -6,6 +6,10 @@
+ 
+ #include <map>
+ 
++#if !BUILDFLAG(IS_IOS_TVOS)
++#include "ui/accelerated_widget_mac/be_layer_hierarchy_host.h"
++#endif
++
+ namespace {
+ 
+ std::map<gfx::AcceleratedWidget, CALayerFrameSinkProvider*>&
+@@ -50,3 +54,18 @@ WidgetToSinkProviderMap() {
+   return found->second;
+ }
+ @end
++
++#if !BUILDFLAG(IS_IOS_TVOS)
++void UIHostBELayerHierarchy(uint64_t view_handle,
++                            xpc_object_t xpc_representation) {
++  NSError* error = nil;
++  BELayerHierarchyHandle* handle =
++      [BELayerHierarchyHandle handleWithXPCRepresentation:xpc_representation
++                                                    error:&error];
++  CALayerFrameSinkProvider* sink =
++      [CALayerFrameSinkProvider lookupByHandle:view_handle];
++  if (handle && sink) {
++    sink.handle = handle;
++  }
++}
++#endif  // !BUILDFLAG(IS_IOS_TVOS)
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

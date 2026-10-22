@@ -1,0 +1,91 @@
+From 07c1c2cf9bca479a01dbe77ae9388d7e79431179 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Thu, 22 Oct 2026 11:44:25 +0200
+Subject: [PATCH 15/17] [iOS] Run single-process Blink on devices
+
+The switches that put Blink in one process now come right after the
+program in the command line, ahead of the `--` that `devicectl` and
+other launch tools pass, after which Chromium takes no switches. A lone
+`--` is dropped, since the app takes no plain arguments. Single-process
+builds also leave the browser engine entitlements out of the app.
+
+On an iPhone 11 Pro Max, signed with the increased memory limit only,
+the app loads pages, and `LanguageModel` answers with Gemma on the GPU.
+---
+ ios/chrome/app/BUILD.gn                         |  3 ++-
+ ios/web/content/init/ios_browser_main_parts.mm  |  6 +++---
+ ios/web/content/init/ios_content_main_runner.cc | 16 ++++++++++++----
+ 3 files changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
+index 186923f14d275..e250ef0363bba 100644
+--- a/ios/chrome/app/BUILD.gn
++++ b/ios/chrome/app/BUILD.gn
+@@ -436,7 +436,8 @@ compile_entitlements("entitlements") {
+   if (target_environment == "catalyst") {
+     entitlements_templates += [ "resources/Environment+Catalyst.entitlements" ]
+   }
+-  if (use_blink) {
++  # The browser engine entitlements, which a single-process Blink does without.
++  if (use_blink && !ios_blink_single_process) {
+     entitlements_templates += [ "//content/app/ios/appex/app.entitlements" ]
+   }
+   substitutions = [ "IOS_BUNDLE_ID_PREFIX=$ios_app_bundle_id_prefix" ]
+diff --git a/ios/web/content/init/ios_browser_main_parts.mm b/ios/web/content/init/ios_browser_main_parts.mm
+index 71cbf0f93429b..8dc4c5fffa967 100644
+--- a/ios/web/content/init/ios_browser_main_parts.mm
++++ b/ios/web/content/init/ios_browser_main_parts.mm
+@@ -37,9 +37,9 @@ class TCPServerSocketFactory : public content::DevToolsSocketFactory {
+   std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
+     auto socket =
+         std::make_unique<net::TCPServerSocket>(nullptr, net::NetLogSource());
+-    if (socket->ListenWithAddressAndPort(
+-            net::IPAddress::IPv4Localhost().ToString(), port_,
+-            /*backlog=*/10) != net::OK) {
++    int rv = socket->ListenWithAddressAndPort(
++        net::IPAddress::IPv4Localhost().ToString(), port_, /*backlog=*/10);
++    if (rv != net::OK) {
+       return nullptr;
+     }
+     return socket;
+diff --git a/ios/web/content/init/ios_content_main_runner.cc b/ios/web/content/init/ios_content_main_runner.cc
+index fa78a55bfff46..a8a058870c43b 100644
+--- a/ios/web/content/init/ios_content_main_runner.cc
++++ b/ios/web/content/init/ios_content_main_runner.cc
+@@ -4,6 +4,8 @@
+ 
+ #import "ios/web/content/init/ios_content_main_runner.h"
+ 
++#import <algorithm>
++
+ #import "base/types/fixed_array.h"
+ #import "components/crash/core/common/crash_key.h"
+ #import "content/public/app/content_main.h"
+@@ -21,14 +23,20 @@ void IOSContentMainRunner::Initialize(WebMainParams params) {
+   static crash_reporter::CrashKeyString<4> key("blink");
+   key.Set("yes");
+   argv_ = std::move(params.args);
++  // Launch tools such as `devicectl` pass a `--` before the app's arguments,
++  // which would make every switch after it a plain argument. The app takes
++  // no plain arguments.
++  std::erase(argv_, "--");
+ #if BUILDFLAG(IOS_BLINK_SINGLE_PROCESS)
+   // There are no BrowserEngineKit extensions to put web content in, and no
+   // JIT, as on tvOS. The network service then runs in this process too. On
+   // its own thread it fails Mojo's sequence checks on iOS, so it runs on the
+-  // IO thread.
+-  argv_.push_back("--single-process");
+-  argv_.push_back("--js-flags=--jitless");
+-  argv_.push_back("--disable-features=NetworkServiceDedicatedThread");
++  // IO thread. Right after the program, ahead of any other argument.
++  if (!argv_.empty()) {
++    argv_.insert(argv_.begin() + 1,
++                 {"--single-process", "--js-flags=--jitless",
++                  "--disable-features=NetworkServiceDedicatedThread"});
++  }
+ #endif
+ }
+ 
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
