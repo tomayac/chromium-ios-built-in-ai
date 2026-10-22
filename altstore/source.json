@@ -47,6 +47,48 @@
           "NSSpeechRecognitionUsageDescription": "This will let you use your voice with certain features on websites."
         }
       }
+    },
+    {
+      "name": "Built-In AI Browser (Blink)",
+      "bundleIdentifier": "com.tomayac.chromium.blink.ios.dev",
+      "developerName": "Thomas Steiner",
+      "subtitle": "With Blink, Chromium's own engine",
+      "localizedDescription": "An experimental build of the browser with Blink, Chromium's own rendering engine, where the built-in AI APIs are Blink's own: LanguageModel (the Prompt API), Summarizer, Writer, Rewriter, Translator, and LanguageDetector, with inference on the device.\n\nOn devices with Apple Intelligence the APIs use Apple Foundation Models. Elsewhere they use Gemma 4 E2B, downloaded once on first use (2 to 2.6 GB) and shared by all sites.\n\nBlink runs in the app's own process and without JIT, since it has none of the browser engine entitlements Apple grants on request. Web pages are not sandboxed from the browser, and JavaScript runs interpreted, so it is slower than in other browsers. Use it with sites you trust.\n\nThis is a personal experiment, and not an official Google product.",
+      "iconURL": "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/icon-blink.png",
+      "tintColor": "#1A73E8",
+      "category": "developer",
+      "screenshots": [
+        "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/screenshot-blink-1.png",
+        "https://tomayac.github.io/chromium-ios-built-in-ai/altstore/screenshot-blink-2.png"
+      ],
+      "versions": [
+        {
+          "version": "157.8092.0",
+          "buildVersion": "157.0.8092.0",
+          "date": "2026-10-22",
+          "localizedDescription": "First release of the build with Blink, tested on an iPhone 11 Pro Max with Gemma: all six APIs, image and audio input, and audio in WAV, MP3, AAC, and MediaRecorder's WebM.",
+          "downloadURL": "https://github.com/tomayac/chromium-ios-built-in-ai/releases/download/v157.0.8092.0/BuiltInAIBrowserBlink-157.0.8092.0.ipa",
+          "size": 157196554,
+          "minOSVersion": "26.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.developer.kernel.increased-memory-limit"
+        ],
+        "privacy": {
+          "NSBluetoothPeripheralUsageDescription": "This lets you discover relevant web pages based on your surroundings.",
+          "NSCalendarsUsageDescription": "This will be used to create events in your Apple Calendar from Built-In AI and Google Lens.",
+          "NSCalendarsWriteOnlyAccessUsageDescription": "This will be used to create events in your Apple Calendar from Built-In AI and Google Lens.",
+          "NSCameraUsageDescription": "This lets you take and upload photos, as well as scan QR codes",
+          "NSContactsUsageDescription": "This will be used to show you possible invitees to your event.",
+          "NSFaceIDUsageDescription": "Built-In AI keeps your sensitive data secure with Face ID.",
+          "NSLocationWhenInUseUsageDescription": "Built-In AI shares your location with sites you allow.",
+          "NSMicrophoneUsageDescription": "This lets you search using your voice",
+          "NSPhotoLibraryAddUsageDescription": "This lets you save photos to your photo library.",
+          "NSSpeechRecognitionUsageDescription": "This will let you use your voice with certain features on websites."
+        }
+      }
     }
   ],
   "news": []
