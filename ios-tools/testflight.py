@@ -396,8 +396,9 @@ def app_store_listing(asc, app, version, listing):
       'marketingUrl': config.get('marketingUrl'),
       'promotionalText': store.get('promotionalText'),
   }
-  # The first version of an app has nothing to say what is new.
-  released = any(v['attributes']['appVersionState'] == 'READY_FOR_SALE'
+  # The first version of an app has nothing to say what is new. Any version
+  # that came before counts, a notarized one too.
+  released = any(v['id'] != version
                  for v in asc.get(f'/apps/{app}/appStoreVersions?limit=50')['data'])
   if released and listing.get('whatsNew'):
     attributes['whatsNew'] = listing['whatsNew']
@@ -441,17 +442,30 @@ def app_store_listing(asc, app, version, listing):
       'subtitle': store.get('subtitle'),
       'privacyPolicyUrl': config['privacyPolicyUrl'],
   }, {'appInfo': {'data': {'type': 'appInfos', 'id': info['id']}}})
-  asc.request('PATCH', f'/appInfos/{info["id"]}', {
-      'data': {'type': 'appInfos', 'id': info['id'], 'relationships': {
-          'primaryCategory': {'data': {'type': 'appCategories',
-                                       'id': store['primaryCategory']}}}}})
+  category = store['primaryCategory']
+  primary = asc.get(f'/appInfos/{info["id"]}/primaryCategory').get('data')
+  if not primary or primary['id'] != category:
+    relationships = {'primaryCategory': {'data': {'type': 'appCategories',
+                                                  'id': category}}}
+    # One category cannot be both, so the secondary one makes way.
+    secondary = asc.get(f'/appInfos/{info["id"]}/secondaryCategory').get('data')
+    if secondary and secondary['id'] == category:
+      relationships['secondaryCategory'] = {'data': None}
+    asc.request('PATCH', f'/appInfos/{info["id"]}', {
+        'data': {'type': 'appInfos', 'id': info['id'],
+                 'relationships': relationships}})
   rating = asc.get(f'/appInfos/{info["id"]}/ageRatingDeclaration')['data']
   asc.request('PATCH', f'/ageRatingDeclarations/{rating["id"]}', {
       'data': {'type': 'ageRatingDeclarations', 'id': rating['id'],
                'attributes': store['ageRating']}})
-  asc.request('PATCH', f'/apps/{app}', {
-      'data': {'type': 'apps', 'id': app, 'attributes': {
-          'contentRightsDeclaration': store['contentRightsDeclaration']}}})
+  # Once set, the declaration cannot change while a version is in review.
+  rights = store['contentRightsDeclaration']
+  current = asc.get(f'/apps/{app}')['data']['attributes'].get(
+      'contentRightsDeclaration')
+  if current != rights:
+    asc.request('PATCH', f'/apps/{app}', {
+        'data': {'type': 'apps', 'id': app, 'attributes': {
+            'contentRightsDeclaration': rights}}})
 
 
 def main():

@@ -18,7 +18,10 @@ from there:
 5. commits and pushes the AltStore source and `released.json`.
 
 Usage (in the release workflow):
-  ci_release.py --chrome 157.0.8103.37 --tag v157.8103.37
+  ci_release.py --chrome 157.0.8103.37 --tag v157.8103.37 [--from altstore]
+
+`--from altstore` skips TestFlight and App Store review, for a run that
+already got that far.
 """
 
 import argparse
@@ -98,11 +101,12 @@ def sign_ad_hoc(app, entitlements):
   run('codesign', '--verify', '--deep', '--strict', app)
 
 
-def release(app, chrome, tag, work):
-  run(os.path.join(TOOLS, 'testflight.py'), '--key-id', ASC_KEY_ID,
-      '--issuer-id', ASC_ISSUER_ID, '--app', app,
-      '--bundle-id', TESTFLIGHT_BUNDLE_ID, '--out', work,
-      '--notes', notes(chrome), '--release', '--app-store')
+def release(app, chrome, tag, work, start):
+  if start == 'testflight':
+    run(os.path.join(TOOLS, 'testflight.py'), '--key-id', ASC_KEY_ID,
+        '--issuer-id', ASC_ISSUER_ID, '--app', app,
+        '--bundle-id', TESTFLIGHT_BUNDLE_ID, '--out', work,
+        '--notes', notes(chrome), '--release', '--app-store')
 
   with open(os.path.join(app, 'Info.plist'), 'rb') as f:
     build = plistlib.load(f)['CFBundleVersion']
@@ -128,12 +132,14 @@ def main():
   parser.add_argument('--chrome', required=True, help='the Chrome version')
   parser.add_argument('--tag', required=True,
                       help='the draft GitHub release with the unsigned app')
+  parser.add_argument('--from', dest='start', choices=['testflight', 'altstore'],
+                      default='testflight', help='skip the stages before this one')
   args = parser.parse_args()
   secrets()
   with tempfile.TemporaryDirectory() as work:
     app, entitlements = unpack(args.tag, work)
     sign_ad_hoc(app, entitlements)
-    release(app, args.chrome, args.tag, work)
+    release(app, args.chrome, args.tag, work, args.start)
   print(f'Released Chrome {args.chrome}. Once App Review has approved it, it goes '
         'out on the App Store, and `altstore_pal.py` publishes it on AltStore '
         'PAL.')
