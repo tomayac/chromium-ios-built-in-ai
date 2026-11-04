@@ -33,6 +33,8 @@ on:
 
 permissions:
   contents: write
+  # Starts the Pages workflow.
+  actions: write
 
 concurrency: release
 

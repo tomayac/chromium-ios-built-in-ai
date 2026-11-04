@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Catches the browser up with the newest Chrome for iOS, and releases it.
 
-Each run asks Chromium Dash for the newest Chrome iOS Stable version. If it is
-newer than the one in `released.json`, this:
+Each run first publishes the newest version that Apple has approved on
+AltStore PAL, if AltStore PAL does not have it yet (see `altstore_pal.py`).
+Then it asks Chromium Dash for the newest Chrome iOS Stable version. If that
+is newer than the one in `released.json`, this:
 
 1. checks out that Chrome release in a Chromium checkout of its own, a git
    worktree of the main one, and syncs its dependencies,
@@ -22,7 +24,7 @@ newer than the one in `released.json`, this:
 Every stage can run again. If a patch does not apply, this stops with the
 checkout in the middle of `git am`: resolve the conflict, run
 `git am --continue`, and run this again with `--from patch`. Once App Review
-has approved the version, `altstore_pal.py` publishes it on AltStore PAL.
+has approved the version, the next run publishes it on AltStore PAL.
 
 Usage:
   catch_up.py [--version 157.0.8103.37] [--force] [--no-release]
@@ -55,6 +57,13 @@ NATIVE_BACKEND_URL = 'https://github.com/tomayac/web-ai-demos.git'
 NATIVE_BACKEND_BRANCH = 'prompt-api-polyfill-native-backend'  # PR #558
 
 UNSIGNED_ASSET = 'Chromium-unsigned.zip'  # What `ci_release.py` signs.
+
+# App Store Connect: the API key, which stays in
+# ~/.appstoreconnect/private_keys, and the app.
+ASC_KEY_ID = 'B78MTCSY2V'
+ASC_ISSUER_ID = '69a6de6f-b54e-47e3-e053-5b8c7c11a4d1'
+APP_ID = '6824947028'
+PAL_SOURCE = os.path.join(REPO, 'altstore', 'pal', 'source.json')
 
 STAGES = ['sync', 'patch', 'polyfills', 'build', 'upload']
 
@@ -353,6 +362,41 @@ def upload(version):
       '-f', f'tag={tag}', cwd=REPO)
 
 
+def chrome_version(app_version):
+  """The Chrome version of an app version: 157.8103.37 is 157.0.8103.37."""
+  major, build, patch = app_version.split('.')
+  return f'{major}.0.{build}.{patch}'
+
+
+def publish_pal():
+  """Publishes the newest approved version on AltStore PAL, if it is new."""
+  sys.path.insert(0, TOOLS)
+  from asc_provision import AppStoreConnect
+  asc = AppStoreConnect(ASC_KEY_ID, ASC_ISSUER_ID, os.path.expanduser(
+      f'~/.appstoreconnect/private_keys/AuthKey_{ASC_KEY_ID}.p8'))
+  current = '0.0.0'
+  if os.path.exists(PAL_SOURCE):
+    with open(PAL_SOURCE) as f:
+      current = json.load(f)['apps'][0]['versions'][0]['version']
+  approved = [v['attributes']['versionString']
+              for v in asc.get(f'/apps/{APP_ID}/appStoreVersions?limit=50')['data']
+              if v['attributes']['appVersionState'] in
+              ('READY_FOR_DISTRIBUTION', 'READY_FOR_SALE')]
+  newer = [v for v in approved if version_key(v) > version_key(current)]
+  if not newer:
+    print(f'AltStore PAL has the newest approved version, {current}.')
+    return
+  version = max(newer, key=version_key)
+  print(f'Publishing {version} on AltStore PAL, which has {current}.')
+  run(os.path.join(TOOLS, 'altstore_pal.py'), '--key-id', ASC_KEY_ID,
+      '--issuer-id', ASC_ISSUER_ID, '--app', APP_ID, '--version', version,
+      '--notes', f'Catches up with Chrome {chrome_version(version)}.', cwd=REPO)
+  run('git', 'add', PAL_SOURCE, cwd=REPO)
+  run('git', 'commit', '-m', f'Publish {version} on AltStore PAL', cwd=REPO)
+  # The push starts the Pages workflow, which publishes the package.
+  run('git', 'push', cwd=REPO)
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
   parser.add_argument('--version', help='a Chrome version, by default the newest '
@@ -364,6 +408,10 @@ def main():
   parser.add_argument('--from', dest='start', choices=STAGES, default='sync',
                       help='skip the stages before this one')
   args = parser.parse_args()
+
+  if not args.no_release:
+    print('== AltStore PAL', flush=True)
+    publish_pal()
 
   version = args.version or newest_chrome()
   last = released()

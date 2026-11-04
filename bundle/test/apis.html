@@ -1,0 +1,165 @@
+<!doctype html>
+<!--
+  Copyright 2026 Google LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Built-in AI APIs Check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --pass: #188038;
+        --fail: #c5221f;
+      }
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td {
+        border-top: 1px solid #8884;
+        padding: 6px 4px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      td:first-child {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .pass {
+        color: var(--pass);
+      }
+      .fail {
+        color: var(--fail);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Built-in AI APIs Check</h1>
+    <p id="present"></p>
+    <table>
+      <tbody id="results"></tbody>
+    </table>
+    <script type="module">
+      import { stopIfRestored } from './fresh.js';
+      if (stopIfRestored()) {
+        throw new Error('Restored tab, not run.');
+      }
+      // One call to each of the built-in AI APIs, with answers that are easy
+      // to check.
+      const names = [
+        'LanguageModel',
+        'Summarizer',
+        'Writer',
+        'Rewriter',
+        'Translator',
+        'LanguageDetector',
+      ];
+      document.querySelector('#present').textContent =
+        'Present: ' + names.filter((name) => name in self).join(', ');
+      const results = document.querySelector('#results');
+      const row = (name, ok, detail) => {
+        const tr = results.insertRow();
+        tr.insertCell().textContent = `${ok ? 'PASS' : 'FAIL'} ${name}`;
+        tr.insertCell().textContent = detail;
+        tr.className = ok ? 'pass' : 'fail';
+      };
+      const check = async (name, fn, expect) => {
+        const started = performance.now();
+        try {
+          const answer = String(await fn()).trim();
+          const ms = Math.round(performance.now() - started);
+          row(name, expect.test(answer), `${answer} (${ms} ms)`);
+        } catch (error) {
+          row(name, false, `${error.name}: ${error.message}`);
+        }
+      };
+
+      const text =
+        'The James Webb Space Telescope, launched in December 2021, observes ' +
+        'the universe in infrared light. Its large gold-coated mirror and ' +
+        'sensitive instruments let astronomers see galaxies that formed ' +
+        'shortly after the Big Bang, study the atmospheres of exoplanets, ' +
+        'and look through dust clouds where stars are born.';
+
+      await check(
+        'LanguageModel',
+        async () =>
+          (await LanguageModel.create()).prompt(
+            'Name the three primary colors. One line.',
+          ),
+        /red/i,
+      );
+      await check(
+        'Summarizer',
+        async () =>
+          (
+            await Summarizer.create({
+              type: 'tldr',
+              length: 'short',
+              format: 'plain-text',
+            })
+          ).summarize(text),
+        /webb|telescope/i,
+      );
+      await check(
+        'Summarizer streaming',
+        async () => {
+          const summarizer = await Summarizer.create({ type: 'key-points' });
+          let summary = '';
+          for await (const chunk of summarizer.summarizeStreaming(text)) {
+            summary += chunk;
+          }
+          return summary;
+        },
+        /webb|telescope|infrared/i,
+      );
+      await check(
+        'Writer',
+        async () =>
+          (await Writer.create({ tone: 'casual', length: 'short' })).write(
+            'A two-sentence note inviting the team to a Friday picnic.',
+          ),
+        /picnic|friday/i,
+      );
+      await check(
+        'Rewriter',
+        async () =>
+          (await Rewriter.create({ tone: 'more-formal' })).rewrite(
+            'hey, can u send me the report asap? thx',
+          ),
+        /report/i,
+      );
+      await check(
+        'Translator',
+        async () =>
+          (
+            await Translator.create({
+              sourceLanguage: 'en',
+              targetLanguage: 'de',
+            })
+          ).translate('Good morning, my friend.'),
+        /guten morgen/i,
+      );
+      await check(
+        'LanguageDetector',
+        async () => {
+          const [top] = await (
+            await LanguageDetector.create()
+          ).detect('Das ist ein ganz normaler deutscher Satz.');
+          return `${top.detectedLanguage} ${top.confidence.toFixed(2)}`;
+        },
+        /^de /,
+      );
+      document.title = 'Built-in AI APIs Check: done';
+    </script>
+  </body>
+</html>

@@ -14,3 +14,6 @@ ios-tools/signing.json
 
 # Contact details for Beta App Review.
 ios-tools/testflight.json
+
+# AltStore PAL packages live on GitHub releases (see altstore_pal.py).
+altstore/pal/*/

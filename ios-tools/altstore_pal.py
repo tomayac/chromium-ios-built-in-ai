@@ -12,13 +12,15 @@ alternative distribution package (ADP). This:
 
 1. looks up the package's ID in App Store Connect,
 2. has AltStore process the package, and downloads it from AltStore,
-3. unpacks it into `--out`/<build>/, from where GitHub Pages serves it, and
+3. uploads its files to the GitHub release `pal-<build>`, from where the
+   Pages workflow places them at `--out`/<build>/ on GitHub Pages, and
 4. writes `--out`/source.json, the AltStore PAL source, with the app's
    metadata from the AltStore Classic source and its `marketplaceID`.
 
-AltStore PAL reads the package through the URL of its `manifest.json`.
-GitHub refuses files over 100 MB, which the script checks before anything is
-committed.
+AltStore PAL reads the package through the URL of its `manifest.json`, and
+the files it lists next to it. The packages stay out of git: each is about
+300 MB. GitHub Pages refuses files over 100 MB, which the script checks
+first.
 """
 
 import argparse
@@ -27,23 +29,30 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import urllib.request
+import tempfile
 import zipfile
 
 from asc_provision import AppStoreConnect
 
+REPO = 'tomayac/chromium-ios-built-in-ai'
+
 ALTSTORE_API = 'https://api.altstore.io'
 PAGES = 'https://tomayac.github.io/chromium-ios-built-in-ai'
 GITHUB_FILE_LIMIT = 100 * 1000 * 1000
+# AltStore's API sits behind Cloudflare, which turns away Python's default
+# User-Agent (error 1010).
+USER_AGENT = 'chromium-ios-built-in-ai release script'
 
 
 def altstore(method, path, body=None):
   request = urllib.request.Request(
       ALTSTORE_API + path, method=method,
       data=json.dumps(body).encode() if body is not None else None,
-      headers={'Content-Type': 'application/json'})
+      headers={'Content-Type': 'application/json', 'User-Agent': USER_AGENT})
   with urllib.request.urlopen(request) as response:
     text = response.read()
     return json.loads(text) if text else {}
@@ -75,7 +84,9 @@ def download_package(adp_id, timeout=1800):
     status = altstore('GET', f'/adps/{adp_id}')
     if status.get('downloadURL'):
       print('Downloading the package from AltStore.')
-      with urllib.request.urlopen(status['downloadURL']) as response:
+      download = urllib.request.Request(status['downloadURL'],
+                                        headers={'User-Agent': USER_AGENT})
+      with urllib.request.urlopen(download) as response:
         return response.read()
     print(f'  AltStore: {status.get("status", "processing")}', flush=True)
     time.sleep(30)
@@ -111,12 +122,37 @@ def unpack(data, directory):
 
 def variant_size(directory):
   """The size of the largest variant, which AltStore shows as the app's."""
-  variants = os.path.join(directory, 'variants')
+  variants = os.path.join(directory, 'variant')
   if not os.path.isdir(variants):
     variants = directory
   sizes = [os.path.getsize(os.path.join(root, name))
            for root, _, files in os.walk(variants) for name in files]
   return max(sizes) if sizes else 0
+
+
+def release_tag(build):
+  return f'pal-{build}'
+
+
+def upload(directory, version, build):
+  """Attaches the package's files to the GitHub release `pal-<build>`.
+
+  Release assets have flat names, so the Pages workflow puts the variants
+  back where `manifest.json` names them.
+  """
+  files = [os.path.join(root, name)
+           for root, _, names in os.walk(directory) for name in names]
+  tag = release_tag(build)
+  exists = subprocess.run(['gh', 'release', 'view', tag, '--repo', REPO],
+                          capture_output=True).returncode == 0
+  if not exists:
+    subprocess.run(['gh', 'release', 'create', tag, '--repo', REPO,
+                    '--title', f'AltStore PAL package {version} ({build})',
+                    '--notes', 'The alternative distribution package that '
+                    'GitHub Pages serves to AltStore PAL.',
+                    '--prerelease', '--latest=false'], check=True)
+  subprocess.run(['gh', 'release', 'upload', tag, '--repo', REPO, '--clobber',
+                  *files], check=True)
 
 
 def write_source(out, classic_source, app, bundle_id, version, build, url,
@@ -174,13 +210,18 @@ def main():
 
   adp_id, build = package_id(asc, args.app, args.version)
   print(f'Package {adp_id} for {args.version} ({build}).')
-  directory = os.path.join(args.out, build)
-  unpack(download_package(adp_id), directory)
-  # `--out` is relative to the repository root, which GitHub Pages mirrors.
-  url = f'{PAGES}/{os.path.normpath(directory)}/manifest.json'
+  with tempfile.TemporaryDirectory() as work:
+    directory = os.path.join(work, build)
+    unpack(download_package(adp_id), directory)
+    upload(directory, args.version, build)
+    size = variant_size(directory)
+  # `--out` is relative to the repository root, and the Pages workflow puts the
+  # package at the same path on GitHub Pages.
+  url = f'{PAGES}/{os.path.normpath(os.path.join(args.out, build))}/manifest.json'
   write_source(args.out, args.classic_source, args.app, args.bundle_id,
-               args.version, build, url, variant_size(directory), args.notes)
-  print(f'Publish {args.out} to GitHub Pages; the package goes live at {url}.')
+               args.version, build, url, size, args.notes)
+  print(f'Commit {args.out}/source.json; once it is pushed, the Pages workflow '
+        f'publishes the package at {url}.')
 
 
 if __name__ == '__main__':

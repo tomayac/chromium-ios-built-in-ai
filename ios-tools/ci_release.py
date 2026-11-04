@@ -125,6 +125,9 @@ def release(app, chrome, tag, work, start):
   run('git', 'add', 'altstore/source.json', 'ios-tools/released.json', cwd=REPO)
   run('git', 'commit', '-m', f'Release Chrome {chrome}', cwd=REPO)
   run('git', 'push', cwd=REPO)
+  # Pushes with the workflow's token start no workflows, so this publishes the
+  # new AltStore source itself.
+  run('gh', 'workflow', 'run', 'pages.yml', cwd=REPO)
 
 
 def main():

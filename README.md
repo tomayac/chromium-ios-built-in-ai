@@ -270,7 +270,8 @@ The script signs the app ad hoc, keeping the sideload entitlements and dropping
 the development certificate and the provisioning profile, which lists device
 IDs. It writes the `.ipa` and adds the release to `altstore/source.json`, with
 the entitlements and privacy descriptions AltStore shows before installing.
-Publishing the `altstore/` folder to GitHub Pages updates the source.
+Pushing it to `main` publishes the source on GitHub Pages, through the Pages
+workflow (see below).
 
 Both release scripts run `ios-tools/rebrand_strings.py`, which puts the app's
 display name in place of "Chromium" in the permission texts of every language,
@@ -320,20 +321,28 @@ iOS, any unique name, and the App ID's bundle ID.
 ## Releasing on AltStore PAL
 
 AltStore PAL, the AltStore edition from the EU app marketplace, installs only
-apps that Apple has notarized, and needs no Apple ID or computer. After
-`testflight.py --notarize` and Apple's review:
+apps that Apple has approved, through notarization or App Store review, and
+needs no Apple ID or computer. `catch_up.py` publishes each approved version
+on its next run. By hand:
 
 ```sh
 ios-tools/altstore_pal.py --key-id <key id> --issuer-id <issuer id> \
-    --app <app Apple ID> --version <notarized version>
+    --app <app Apple ID> --version <approved version>
 ```
 
 The script finds the alternative distribution package Apple generated for the
-version, has AltStore process it, and unpacks it into `altstore/pal/<build>/`.
-It writes `altstore/pal/source.json`, a source of its own with the app's
+version, has AltStore process it, and attaches its files to the GitHub release
+`pal-<build>`. Each package is about 300 MB, so it stays out of git. The script
+writes `altstore/pal/source.json`, a source of its own with the app's
 `marketplaceID`, since AltStore PAL and AltStore Classic read different kinds of
-downloads. Once `altstore/pal/` is on GitHub Pages, the install page shows an
-**Add to AltStore PAL** button, which opens AltStore PAL through its own
+downloads.
+
+GitHub Pages comes from `.github/workflows/pages.yml`, which runs on every push
+to `main`. `ios-tools/assemble_site.py` puts the test pages, the privacy
+policy, and `altstore/` together, and places the package of
+`altstore/pal/source.json` at `altstore/pal/<build>/`, where its
+`manifest.json` expects it. Once it is live, the install page shows an **Add to
+AltStore PAL** button, which opens AltStore PAL through its own
 `altstore-pal://` scheme even where AltStore Classic is installed too.
 
 The app first has to be authorized for AltStore PAL once: AltStore issues a
