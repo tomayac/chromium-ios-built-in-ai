@@ -39,6 +39,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -331,6 +332,17 @@ def write_entitlements():
     plistlib.dump(entitlements, f)
 
 
+def upload_asset(tag, path, attempts=4):
+  """Attaches `path` to the release `tag`, retrying GitHub's upload timeouts."""
+  for attempt in range(1, attempts + 1):
+    last = attempt == attempts
+    if not run('gh', 'release', 'upload', tag, path, '--clobber', cwd=REPO,
+               check=last).returncode:
+      return
+    print(f'Upload failed, trying again ({attempt}/{attempts - 1}).', flush=True)
+    time.sleep(30)
+
+
 def upload(version):
   """Hands the build to the release workflow."""
   with open(os.path.join(app_path(), 'Info.plist'), 'rb') as f:
@@ -356,7 +368,7 @@ def upload(version):
     run('gh', 'release', 'create', tag, archive, '--draft', '--title', title,
         '--notes', f'Catches up with Chrome {version}.', cwd=REPO)
   else:
-    run('gh', 'release', 'upload', tag, archive, '--clobber', cwd=REPO)
+    upload_asset(tag, archive)
   os.remove(archive)
   run('gh', 'workflow', 'run', 'release.yml', '-f', f'chrome={version}',
       '-f', f'tag={tag}', cwd=REPO)
