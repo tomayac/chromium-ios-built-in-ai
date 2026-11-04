@@ -1,8 +1,8 @@
-From c5679712c756e0f960a92615d3cbc5024fe06d6f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 11:44:52 +0200
-Subject: [PATCH 06/13] [iOS] Manage Gemma engines across sessions, memory, and
- the background
+Subject: [PATCH] [iOS] Manage Gemma engines across sessions, memory, and the
+ background
 
 Sessions keep a conversation with their engine, which holds the engine
 and its KV cache. Evicting an engine now has its sessions let go of
@@ -651,6 +651,3 @@ index 68df92f3ba6f3..09eae465ada6e 100644
  }
  
  }  // namespace
--- 
-2.56.0.rc1.315.gc6ed9934b7-goog
-

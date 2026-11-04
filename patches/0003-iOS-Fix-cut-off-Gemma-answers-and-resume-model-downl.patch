@@ -1,8 +1,7 @@
-From 48ab4c05eb49d049d2c359bb808052e3cec7eefa Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 09:54:51 +0200
-Subject: [PATCH 03/13] [iOS] Fix cut-off Gemma answers, and resume model
- downloads
+Subject: [PATCH] [iOS] Fix cut-off Gemma answers, and resume model downloads
 
 Gemma stopped free-form answers after a few dozen tokens whenever the
 conversation had constrained decoding enabled, which it always had.
@@ -340,6 +339,3 @@ index 8c3c890b7c576..6546e5d17127d 100644
      }
    }
  }
--- 
-2.56.0.rc1.315.gc6ed9934b7-goog
-

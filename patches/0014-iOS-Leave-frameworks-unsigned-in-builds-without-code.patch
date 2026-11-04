@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Wed, 4 Nov 2026 01:20:13 +0100
+Subject: [PATCH] [iOS] Leave frameworks unsigned in builds without code
+ signing
+
+`codesign.py` signed the system frameworks it installs into a bundle
+even with `--disable-code-signature`, so builds with
+`ios_enable_code_signing = false` still ran `codesign` when they
+embedded a framework such as LiteRT-LM's.
+---
+ build/config/apple/codesign.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/build/config/apple/codesign.py b/build/config/apple/codesign.py
+index fbb7c2f4455e6..468a370df035b 100644
+--- a/build/config/apple/codesign.py
++++ b/build/config/apple/codesign.py
+@@ -607,6 +607,8 @@ def InstallSystemFramework(framework_path, bundle_path, args):
+             shutil.rmtree(installed_framework_path)
+         shutil.copytree(framework_path, installed_framework_path)
+ 
++    if args.no_signature:
++        return
+     CodeSignBundle(
+         installed_framework_path,
+         args.identity,

@@ -1,8 +1,7 @@
-From 42f59f1864a77ae660ae2dfb987cb3d4c713536f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 11:13:15 +0200
-Subject: [PATCH 05/13] [iOS] Pick Gemma's file, backend, and precision per
- session
+Subject: [PATCH] [iOS] Pick Gemma's file, backend, and precision per session
 
 Sessions that read only text run the text-only GPU file
 (gemma-4-E2B-it-gpu.litertlm) on the GPU from Apple GPU family 6 (A13)
@@ -604,6 +603,3 @@ index 3dfbf72676ea4..acffb9c564a09 100644
          "chunks": chunks,
          "contextTokens": contextTokens,
          // The start of the answer, to tell real text from numeric garbage.
--- 
-2.56.0.rc1.315.gc6ed9934b7-goog
-

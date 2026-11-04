@@ -1,8 +1,7 @@
-From 907dbeb11faa3ecf31d345004ec0d9f2b96f2dc0 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Mon, 19 Oct 2026 19:04:22 +0200
-Subject: [PATCH 02/13] [iOS] Fix the built-in AI build, and schemas on iOS
- 27.0
+Subject: [PATCH] [iOS] Fix the built-in AI build, and schemas on iOS 27.0
 
 Builds LiteRT-LM's Swift API in the Swift 5 language mode its package
 declares, and passes the flag that keeps FoundationModels weakly linked
@@ -193,6 +192,3 @@ index 543e4cb818fe1..b7033296ab82d 100644
 +    ":swift5",
 +  ]
  }
--- 
-2.56.0.rc1.315.gc6ed9934b7-goog
-

@@ -1,7 +1,7 @@
-From 06a099dbdc261aa98d6a39b32289f93f32c243ad Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Thomas Steiner <tomac@chromium.org>
 Date: Tue, 20 Oct 2026 18:26:57 +0200
-Subject: [PATCH 13/13] [iOS] Decode AAC and other audio for Gemma
+Subject: [PATCH] [iOS] Decode AAC and other audio for Gemma
 
 LiteRT-LM decodes audio input with miniaudio, which reads WAV, MP3, and
 FLAC only. MediaRecorder records AAC on iOS, and iPhones save recordings
@@ -154,6 +154,3 @@ index 2e9aa1f0023ec..4e7ef1912c5bc 100644
  struct GenerationOutput {
    let text: String
    let usage: Int
--- 
-2.56.0.rc1.315.gc6ed9934b7-goog
-
