@@ -26,7 +26,7 @@
           "date": "2026-11-04",
           "localizedDescription": "Catches up with Chrome 157.0.8103.37.",
           "downloadURL": "https://github.com/tomayac/chromium-ios-built-in-ai/releases/download/v157.0.8103.37/BuiltInAIBrowser-157.0.8103.37.ipa",
-          "size": 85266657,
+          "size": 85265725,
           "minOSVersion": "18.0"
         },
         {
