@@ -36,6 +36,7 @@ import time
 
 import asc_provision as asc_lib
 import rebrand_strings
+import upload_screenshots
 from asc_provision import AppStoreConnect, run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -301,11 +302,12 @@ def release(asc, app, build, config, notes):
   print(f'Public link, live once the review passes: {link}')
 
 
-def notarize(asc, app, build, short_version):
-  """Submits `build` for notarization, for alternative app marketplaces.
+def submit_version(asc, app, build, short_version, review_type, listing=None):
+  """Submits `build` as the app version `short_version` for review.
 
-  It goes out as the app version `short_version`, with review type
-  Notarization, which App Store Connect creates if needed.
+  `review_type` is `NOTARIZATION`, for alternative app marketplaces, or
+  `APP_STORE`, for the App Store. App Store Connect creates the version if
+  needed, and `listing` fills in what the App Store shows.
   """
   versions = asc.get(f'/apps/{app}/appStoreVersions?limit=50')['data']
   version = next((v for v in versions
@@ -316,20 +318,22 @@ def notarize(asc, app, build, short_version):
   if version and version['attributes']['appVersionState'] not in editable:
     sys.exit(f'Version {short_version} is '
              f'{version["attributes"]["appVersionState"]}; a new build needs a '
-             'new version number for notarization.')
+             'new version number.')
   if not version:
     version = asc.post('/appStoreVersions', {
         'data': {'type': 'appStoreVersions',
                  'attributes': {'platform': 'IOS', 'versionString': short_version,
-                                'reviewType': 'NOTARIZATION'},
+                                'reviewType': review_type},
                  'relationships': {'app': {'data': {'type': 'apps',
                                                     'id': app}}}}})['data']
   else:
     asc.request('PATCH', f'/appStoreVersions/{version["id"]}', {
         'data': {'type': 'appStoreVersions', 'id': version['id'],
-                 'attributes': {'reviewType': 'NOTARIZATION'}}})
+                 'attributes': {'reviewType': review_type}}})
   asc.request('PATCH', f'/appStoreVersions/{version["id"]}/relationships/build',
               {'data': {'type': 'builds', 'id': build}})
+  if listing:
+    app_store_listing(asc, app, version['id'], listing)
 
   # A submission that never went out can take the version; App Store Connect
   # allows one open submission per platform.
@@ -354,7 +358,100 @@ def notarize(asc, app, build, short_version):
   asc.request('PATCH', f'/reviewSubmissions/{submission["id"]}', {
       'data': {'type': 'reviewSubmissions', 'id': submission['id'],
                'attributes': {'submitted': True}}})
-  print(f'Submitted {short_version} for notarization.')
+  print(f'Submitted {short_version} for review ({review_type}).')
+
+
+def upsert(asc, existing, kind, attributes, relationships):
+  """Updates `existing`, or creates it with `relationships`."""
+  if existing:
+    asc.request('PATCH', f'/{kind}/{existing["id"]}', {
+        'data': {'type': kind, 'id': existing['id'], 'attributes': attributes}})
+  else:
+    asc.post(f'/{kind}', {'data': {'type': kind, 'attributes': attributes,
+                                   'relationships': relationships}})
+
+
+def app_store_listing(asc, app, version, listing):
+  """Fills in what the App Store shows and App Review needs for `version`.
+
+  `listing` is the `appStore` part of `testflight.json`, with `whatsNew` added
+  for updates. App Privacy answers are the one part the API cannot set: they
+  need App Store Connect once.
+  """
+  locale = 'en-US'
+  config = listing['config']
+  store = config['appStore']
+  asc.request('PATCH', f'/appStoreVersions/{version}', {
+      'data': {'type': 'appStoreVersions', 'id': version, 'attributes': {
+          'copyright': store['copyright'], 'releaseType': 'AFTER_APPROVAL'}}})
+
+  localization = next(
+      (l for l in asc.get(f'/appStoreVersions/{version}'
+                          '/appStoreVersionLocalizations')['data']
+       if l['attributes']['locale'] == locale), None)
+  attributes = {
+      'description': store.get('description', config['description']),
+      'keywords': store['keywords'],
+      'supportUrl': store['supportUrl'],
+      'marketingUrl': config.get('marketingUrl'),
+      'promotionalText': store.get('promotionalText'),
+  }
+  # The first version of an app has nothing to say what is new.
+  released = any(v['attributes']['appVersionState'] == 'READY_FOR_SALE'
+                 for v in asc.get(f'/apps/{app}/appStoreVersions?limit=50')['data'])
+  if released and listing.get('whatsNew'):
+    attributes['whatsNew'] = listing['whatsNew']
+  upsert(asc, localization, 'appStoreVersionLocalizations',
+         attributes if localization else {'locale': locale, **attributes},
+         {'appStoreVersion': {'data': {'type': 'appStoreVersions',
+                                       'id': version}}})
+  localization = next(
+      l for l in asc.get(f'/appStoreVersions/{version}'
+                         '/appStoreVersionLocalizations')['data']
+      if l['attributes']['locale'] == locale)
+  missing = [t for t in store.get('screenshots', {})
+             if not any(s['attributes']['screenshotDisplayType'] == t
+                        for s in asc.get('/appStoreVersionLocalizations/'
+                                         f'{localization["id"]}/appScreenshotSets')
+                        ['data'])]
+  for display_type in missing:
+    path = os.path.join(os.path.dirname(HERE), store['screenshots'][display_type])
+    set_id = upload_screenshots.screenshot_set(asc, localization["id"], display_type)
+    upload_screenshots.upload(asc, set_id, path)
+    print(f'Uploaded the {display_type} screenshot.')
+
+  review = config['review']
+  detail = asc.get(f'/appStoreVersions/{version}/appStoreReviewDetail').get('data')
+  upsert(asc, detail, 'appStoreReviewDetails', {
+      'contactFirstName': review['firstName'],
+      'contactLastName': review['lastName'],
+      'contactEmail': review['email'],
+      'contactPhone': review['phone'],
+      'demoAccountRequired': False,
+      'notes': review.get('notes', ''),
+  }, {'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version}}})
+
+  # The app information that is open for changes alongside the version.
+  info = next(i for i in asc.get(f'/apps/{app}/appInfos')['data']
+              if i['attributes'].get('state') != 'READY_FOR_DISTRIBUTION')
+  info_localization = next(
+      (l for l in asc.get(f'/appInfos/{info["id"]}/appInfoLocalizations')['data']
+       if l['attributes']['locale'] == locale), None)
+  upsert(asc, info_localization, 'appInfoLocalizations', {
+      'subtitle': store.get('subtitle'),
+      'privacyPolicyUrl': config['privacyPolicyUrl'],
+  }, {'appInfo': {'data': {'type': 'appInfos', 'id': info['id']}}})
+  asc.request('PATCH', f'/appInfos/{info["id"]}', {
+      'data': {'type': 'appInfos', 'id': info['id'], 'relationships': {
+          'primaryCategory': {'data': {'type': 'appCategories',
+                                       'id': store['primaryCategory']}}}}})
+  rating = asc.get(f'/appInfos/{info["id"]}/ageRatingDeclaration')['data']
+  asc.request('PATCH', f'/ageRatingDeclarations/{rating["id"]}', {
+      'data': {'type': 'ageRatingDeclarations', 'id': rating['id'],
+               'attributes': store['ageRating']}})
+  asc.request('PATCH', f'/apps/{app}', {
+      'data': {'type': 'apps', 'id': app, 'attributes': {
+          'contentRightsDeclaration': store['contentRightsDeclaration']}}})
 
 
 def main():
@@ -373,6 +470,9 @@ def main():
   parser.add_argument('--notarize', action='store_true',
                       help='submit the build for notarization, which AltStore '
                       'PAL and other alternative app marketplaces need')
+  parser.add_argument('--app-store', action='store_true',
+                      help='submit the build for App Store review, with the '
+                      'listing of the appStore part of testflight.json')
   parser.add_argument('--skip-upload', metavar='BUILD_NUMBER',
                       help='release an uploaded build instead of a new one')
   args = parser.parse_args()
@@ -384,9 +484,10 @@ def main():
 
   asc = AppStoreConnect(args.key_id, args.issuer_id, key)
   config = None
-  if args.release:
+  if args.release or args.app_store:
     if not os.path.exists(CONFIG):
-      sys.exit(f'--release needs {CONFIG}; see testflight.example.json.')
+      sys.exit(f'--release and --app-store need {CONFIG}; see '
+               'testflight.example.json.')
     with open(CONFIG) as f:
       config = json.load(f)
 
@@ -417,8 +518,14 @@ def main():
   print(f'Build {build_number} is ready for internal testers.')
   if args.release:
     release(asc, app, build, config, args.notes)
-  if args.notarize:
-    notarize(asc, app, build, info['CFBundleShortVersionString'])
+  short_version = info['CFBundleShortVersionString']
+  # One version has one review type, and App Store review covers alternative
+  # app marketplaces too.
+  if args.app_store:
+    submit_version(asc, app, build, short_version, 'APP_STORE',
+                   {'config': config, 'whatsNew': args.notes})
+  elif args.notarize:
+    submit_version(asc, app, build, short_version, 'NOTARIZATION')
 
 
 if __name__ == '__main__':

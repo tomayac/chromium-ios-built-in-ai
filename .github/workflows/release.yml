@@ -1,0 +1,53 @@
+# Copyright 2026 Google LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# Signs and releases a build of the browser on a GitHub-hosted Mac: on
+# TestFlight, for App Store review, and on AltStore Classic. `catch_up.py`
+# builds the app without signing it, attaches it to a draft release, and starts
+# this workflow; see `ios-tools/ci_release.py`.
+#
+# Needs these repository secrets, which `ios-tools/ci_secrets.sh` sets:
+#   ASC_API_KEY: the App Store Connect API key (AuthKey_<KEY_ID>.p8).
+#   SIGNING_P12, SIGNING_P12_PASSWORD: the Apple Distribution identity, as a
+#     base64-encoded PKCS #12 file, and its password.
+#   TESTFLIGHT_JSON: `ios-tools/testflight.json`.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      chrome:
+        description: The Chrome version of the build
+        type: string
+        required: true
+      tag:
+        description: The draft release with the unsigned app
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHROME: ${{ inputs.chrome }}
+          TAG: ${{ inputs.tag }}
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+          SIGNING_P12: ${{ secrets.SIGNING_P12 }}
+          SIGNING_P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+          TESTFLIGHT_JSON: ${{ secrets.TESTFLIGHT_JSON }}
+        run: |
+          git config user.name "Thomas Steiner"
+          git config user.email "steiner.thomas@gmail.com"
+          python3 ios-tools/ci_release.py --chrome "$CHROME" --tag "$TAG"

@@ -123,7 +123,7 @@ page ── LanguageModel / Summarizer / … (polyfills, page world)
 ## Repository layout
 
 - `patches/`: the Chromium change, as `git format-patch` output. It applies to
-  Chromium `main` as of October 2026.
+  the Chrome release in `ios-tools/released.json`.
 - `bundle/`: builds the polyfill script that Chromium injects, and a test page
   for the APIs.
 - `ios-tools/`: provisions a device build through the App Store Connect API,
@@ -303,6 +303,16 @@ build's `CFBundleShortVersionString`, with review type Notarization. The app has
 to be available in the EU, and App Store Connect needs screenshots for it, which
 `ios-tools/upload_screenshots.py` uploads.
 
+`--app-store` submits the build for App Store review instead, which covers
+alternative app marketplaces too, since one app version has one review type. It
+first fills in the listing from the `appStore` part of `testflight.json`:
+subtitle, keywords, support URL, promotional text, copyright, category, age
+rating, and content rights, the App Review contact, and for updates the release
+notes. It uploads the screenshots it names (paths relative to the repository)
+where the version has none. App Privacy answers are the one part the API cannot
+set, so they need one visit to App Store Connect. Approved versions go out on
+the App Store right away.
+
 The API cannot create apps, so the app record needs one visit to
 [App Store Connect](https://appstoreconnect.apple.com/apps) first: **New App**,
 iOS, any unique name, and the App ID's bundle ID.
@@ -330,6 +340,51 @@ The app first has to be authorized for AltStore PAL once: AltStore issues a
 marketplace token for the team's Developer ID
 (`POST https://api.altstore.io/register`), which goes into App Store Connect
 under **Users and Access → Integrations → Marketplace**.
+
+## Catching up with Chrome
+
+`ios-tools/catch_up.py` keeps the browser on the newest Chrome for iOS. It asks
+Chromium Dash for the newest Chrome iOS Stable version, and if that is newer
+than the one in `ios-tools/released.json`, it:
+
+1. checks out that Chrome release in a Chromium checkout of its own, a git
+   worktree of the main one in `$RELEASE_ROOT`, and syncs its dependencies,
+2. applies `patches/` onto it and writes them back, so they keep up with
+   Chrome's changes,
+3. rebuilds the polyfill bundle from the newest web-ai-demos, and folds any
+   change into the patch that adds it,
+4. builds the app with `ios-tools/release.gn`, unsigned, since Santa may not
+   let `codesign` run on the Mac that builds it, and
+5. pushes the new patches, attaches the app to a draft GitHub release, and
+   starts the release workflow.
+
+```sh
+ios-tools/catch_up.py --no-release   # Stop after the build.
+ios-tools/catch_up.py --from upload
+gh run watch                         # Follow the release workflow.
+```
+
+The release workflow, `.github/workflows/release.yml`, runs
+`ios-tools/ci_release.py` on a GitHub-hosted Mac. It signs the app ad hoc with
+the entitlements of a sideload build, releases it on TestFlight and submits it
+for App Store review (`testflight.py --release --app-store`), packages it for
+AltStore Classic, publishes the GitHub release with the `.ipa` in place of the
+unsigned app, and commits the AltStore source and `released.json`. It signs
+with the Apple Distribution identity of `asc_provision.py`'s keychain, which
+`ios-tools/ci_secrets.sh` stores as a repository secret, together with the App
+Store Connect API key and `testflight.json`. Run that script once, and again
+when the distribution certificate changes.
+
+Without a newer Chrome, it stops right away. Every stage can run again, and
+`--from` skips the ones before it. If a patch no longer applies, the script
+stops in the middle of `git am` in the release checkout: resolve the conflict,
+run `git am --continue`, and run the script again with `--from patch`. Once
+App Review has approved the version, it goes out on the App Store, and
+`altstore_pal.py` publishes it on AltStore PAL.
+
+The script fetches Chromium and its dependencies over public HTTPS, also where
+the global git config rewrites `googlesource.com` URLs to a remote that needs a
+login, and builds with the remote build service that `release.gn` turns on.
 
 ## Updating the polyfills
 

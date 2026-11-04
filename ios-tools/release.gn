@@ -1,0 +1,38 @@
+# Copyright 2026 Google LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# GN args of release builds. `catch_up.py` adds the signing args from
+# `signing.json` to these.
+
+target_os = "ios"
+target_environment = "device"
+target_cpu = "arm64"
+use_blink = false
+is_debug = false
+is_component_build = false
+dcheck_always_on = false
+symbol_level = 0
+use_remoteexec = true
+enable_litert_lm = true
+
+ios_enable_share_extension = false
+ios_enable_extended_share_extension = false
+ios_enable_open_extension = false
+ios_enable_credential_provider_extension = false
+ios_enable_intents_extension = false
+ios_enable_widget_kit_extension = false
+ios_enable_lockscreen_widget = false
+ios_enable_push_notification_service_extension = false
+
+ios_enable_memory_debugging = false
+
+# Santa blocks `codesign` when the build system starts it, so the build leaves
+# the app unsigned, and `catch_up.py` signs it after the build. The release
+# scripts sign it again for TestFlight and AltStore.
+ios_enable_code_signing = false
+
+ios_chrome_sideload_entitlements = true
+
+ios_chrome_display_name = "Built-In AI"
+ios_application_icons_target = "//ios/chrome/app/resources:built_in_ai_icons"
+ios_application_icons_target_legacy = "//ios/chrome/app/resources:no_icons"

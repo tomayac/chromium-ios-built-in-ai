@@ -9,5 +9,34 @@
     "email": "you@example.com",
     "phone": "+1 555 0100",
     "notes": "An experimental web browser, built from Chromium, that gives web pages on-device AI APIs. No account is needed. To try it, open https://tomayac.github.io/chromium-ios-built-in-ai/ in the app. On devices without Apple Intelligence, the first prompt downloads a 2 GB model from Hugging Face."
+  },
+  "appStore": {
+    "subtitle": "On-device AI APIs for the web",
+    "keywords": "browser,AI,on-device,Gemma,Prompt API,Summarizer,Translator,Writer,Rewriter,web",
+    "supportUrl": "https://github.com/tomayac/chromium-ios-built-in-ai/issues",
+    "promotionalText": "Web pages get the built-in AI APIs, running entirely on your device.",
+    "copyright": "2026 Your Name",
+    "primaryCategory": "UTILITIES",
+    "contentRightsDeclaration": "DOES_NOT_USE_THIRD_PARTY_CONTENT",
+    "ageRating": {
+      "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+      "contests": "NONE",
+      "gamblingSimulated": "NONE",
+      "horrorOrFearThemes": "NONE",
+      "matureOrSuggestiveThemes": "NONE",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "NONE",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "NONE",
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+      "gambling": false,
+      "unrestrictedWebAccess": true
+    },
+    "screenshots": {
+      "APP_IPHONE_67": "appstore/iphone.png",
+      "APP_IPAD_PRO_3GEN_129": "appstore/ipad.png"
+    }
   }
 }
