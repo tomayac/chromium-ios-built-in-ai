@@ -335,9 +335,9 @@ def submit_version(asc, app, build, short_version, review_type, listing=None):
   if listing:
     app_store_listing(asc, app, version['id'], listing)
 
-  # A submission that never went out can take the version; App Store Connect
-  # allows one open submission per platform.
-  open_states = ('READY_FOR_REVIEW',)
+  # A submission that never went out, or that App Review sent back, can take
+  # the version; App Store Connect allows one open submission per platform.
+  open_states = ('READY_FOR_REVIEW', 'UNRESOLVED_ISSUES')
   submissions = asc.get(f'/reviewSubmissions?filter[app]={app}'
                         '&filter[platform]=IOS')['data']
   submission = next((s for s in submissions
@@ -355,6 +355,12 @@ def submit_version(asc, app, build, short_version, review_type, listing=None):
                                           'id': submission['id']}},
             'appStoreVersion': {'data': {'type': 'appStoreVersions',
                                          'id': version['id']}}}}})
+  # A rejected item goes back to App Review once marked as resolved.
+  for item in items:
+    if item['attributes'].get('state') == 'REJECTED':
+      asc.request('PATCH', f'/reviewSubmissionItems/{item["id"]}', {
+          'data': {'type': 'reviewSubmissionItems', 'id': item['id'],
+                   'attributes': {'resolved': True}}})
   asc.request('PATCH', f'/reviewSubmissions/{submission["id"]}', {
       'data': {'type': 'reviewSubmissions', 'id': submission['id'],
                'attributes': {'submitted': True}}})

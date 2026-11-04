@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Wed, 4 Nov 2026 21:23:32 +0100
+Subject: [PATCH] [iOS] Block itms-services links
+
+App Review rejected the app under Guideline 2.5.2, since handing an
+itms-services URL to iOS installs an app over the air. The app launcher
+now cancels these navigations. Other itms schemes, such as itms-apps and
+itms-beta, still open the App Store and TestFlight.
+---
+ .../browser/app_launcher/model/app_launcher_tab_helper.mm   | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm b/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm
+index 834bd1d8b3346..60407e57c84cb 100644
+--- a/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm
++++ b/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm
+@@ -333,6 +333,12 @@ AppLauncherTabHelper::GetPolicyDecisionAndOptionalAppLaunchRequest(
+             kNoAppLaunchRequest};
+   }
+ 
++  // `itms-services` links install apps over the air, which App Store apps must
++  // not do (App Review Guideline 2.5.2), so they go nowhere.
++  if (request_url.SchemeIs("itms-services")) {
++    return {PolicyDecision::Cancel(), kNoAppLaunchRequest};
++  }
++
+   // Do not allow allow navigation if URL is blocked by enterprise policy.
+   ProfileIOS* profile =
+       ProfileIOS::FromBrowserState(web_state()->GetBrowserState());
