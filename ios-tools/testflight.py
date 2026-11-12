@@ -320,6 +320,15 @@ def submit_version(asc, app, build, short_version, review_type, listing=None):
              f'{version["attributes"]["appVersionState"]}; a new build needs a '
              'new version number.')
   if not version:
+    # App Store Connect keeps one unreleased version at a time, so a version
+    # that never went out takes the new number.
+    version = next((v for v in versions
+                    if v['attributes']['appVersionState'] in editable), None)
+    if version:
+      asc.request('PATCH', f'/appStoreVersions/{version["id"]}', {
+          'data': {'type': 'appStoreVersions', 'id': version['id'],
+                   'attributes': {'versionString': short_version}}})
+  if not version:
     version = asc.post('/appStoreVersions', {
         'data': {'type': 'appStoreVersions',
                  'attributes': {'platform': 'IOS', 'versionString': short_version,
