@@ -98,27 +98,27 @@ def replace_strings(value, old, new):
 
 
 def swift_support(app, work):
-  """Adds Xcode's own copies of the Swift libraries the app embeds.
+  """Adds Apple's copies of the Swift libraries the app embeds.
 
   App Store Connect wants Apple-signed originals of every `libswift*.dylib` in
-  `Frameworks/` under `SwiftSupport/iphoneos/` (error 90426 otherwise).
+  `Frameworks/` under `SwiftSupport/iphoneos/` (error 90426 otherwise), and they
+  must be the same files that were embedded (90428). The build embeds them as
+  Xcode ships them, so they come from `app` before anything re-signs them.
   Chrome 158 embeds `libswiftCompatibilitySpan.dylib`.
   """
   embedded = sorted(glob.glob(os.path.join(app, 'Frameworks', 'libswift*.dylib')))
   if not embedded:
     return False
-  swiftc = subprocess.run(['xcrun', '--sdk', 'iphoneos', '--find', 'swiftc'],
-                          capture_output=True, text=True, check=True).stdout
-  lib = os.path.join(os.path.dirname(os.path.dirname(swiftc.strip())), 'lib')
   target = os.path.join(work, 'SwiftSupport', 'iphoneos')
   os.makedirs(target)
   for path in embedded:
     name = os.path.basename(path)
-    # The newest Swift version comes last.
-    originals = sorted(glob.glob(os.path.join(lib, 'swift*', 'iphoneos', name)))
-    if not originals:
-      sys.exit(f'Xcode has no {name} for SwiftSupport.')
-    shutil.copy2(originals[-1], target)
+    signature = subprocess.run(['codesign', '-dv', path], capture_output=True,
+                               text=True).stderr
+    if 'TeamIdentifier=59GAB85EFG' not in signature:
+      sys.exit(f'{name} in the app no longer has Apple\'s signature, so it '
+               'cannot go into SwiftSupport.')
+    shutil.copy2(path, target)
     print(f'Added {name} to SwiftSupport.')
   return True
 
@@ -189,7 +189,7 @@ def package(app_path, identity, profile, bundle_identifier, build_number,
     if os.path.exists(ipa):
       os.remove(ipa)
     contents = ['Payload']
-    if swift_support(copy, work):
+    if swift_support(app_path, work):
       contents.append('SwiftSupport')
     subprocess.run(['zip', '-qry', ipa, *contents], cwd=work, check=True)
     return ipa
