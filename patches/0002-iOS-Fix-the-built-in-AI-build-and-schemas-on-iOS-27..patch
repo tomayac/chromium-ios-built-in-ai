@@ -23,7 +23,7 @@ Lets //ios/chrome/app build with every app extension disabled.
  6 files changed, 76 insertions(+), 11 deletions(-)
 
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index 59ac311399a10..ece70ffe8426c 100644
+index 0e9c03aff882b..ac03c7331b154 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
 @@ -1017,6 +1017,9 @@ chrome_app("chrome") {

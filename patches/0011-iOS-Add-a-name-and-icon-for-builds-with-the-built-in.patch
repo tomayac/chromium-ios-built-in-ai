@@ -23,7 +23,7 @@ with the words "Built-In AI". `no_icons` fills the legacy icon slot.
  create mode 100644 ios/chrome/app/resources/BuiltInAIIcons.xcassets/Contents.json
 
 diff --git a/ios/build/chrome_build.gni b/ios/build/chrome_build.gni
-index 43103d0a2055d..7688bf8c3cccb 100644
+index 880919097bc74..648d6e063afbe 100644
 --- a/ios/build/chrome_build.gni
 +++ b/ios/build/chrome_build.gni
 @@ -35,6 +35,10 @@ declare_args() {
@@ -38,7 +38,7 @@ index 43103d0a2055d..7688bf8c3cccb 100644
    ios_enable_share_extension = true
  
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index bd6690f5e6d6d..186923f14d275 100644
+index f80c19332986b..99cc55018ed82 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
 @@ -898,6 +898,11 @@ ios_framework_bundle("early_partition_alloc_framework") {

@@ -21,10 +21,10 @@ starts with this signing and runs Gemma on the GPU and the CPU.
  create mode 100644 ios/chrome/app/resources/Chrome+Sideload.entitlements
 
 diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc
-index 23a26e00d3937..abe3f3a3f4eb7 100644
+index 57c5a92703a24..1498e4b7fa734 100644
 --- a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc
 +++ b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.cc
-@@ -107,7 +107,7 @@ size_t PartitionAddressSpace::zero_segment_size_ = 0;
+@@ -108,7 +108,7 @@ size_t PartitionAddressSpace::zero_segment_size_ = 0;
  #if !PA_BUILDFLAG(IS_IOS)
  #error Dynamic pool size is only supported on iOS.
  #endif
@@ -33,7 +33,7 @@ index 23a26e00d3937..abe3f3a3f4eb7 100644
  
  bool PartitionAddressSpace::IsIOSTestProcess() {
    // On iOS, only applications with the extended virtual addressing entitlement
-@@ -174,13 +174,18 @@ void PartitionAddressSpace::Init() {
+@@ -175,13 +175,18 @@ void PartitionAddressSpace::Init() {
    if (!setup_.regular_pool_base_address_) {
      // We shouldn't ever fail to map on test processes.
      PA_CHECK(!IsIOSTestProcess());
@@ -59,7 +59,7 @@ index 23a26e00d3937..abe3f3a3f4eb7 100644
      // Nothing to free since we failed originally.
    }
  #endif
-@@ -441,7 +446,7 @@ void PartitionAddressSpace::UninitForTesting() {
+@@ -447,7 +452,7 @@ void PartitionAddressSpace::UninitForTesting() {
    setup_.metadata_region_start_ = kUninitializedPoolBaseAddress;
  #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
    metadata_region_size_ = 0;
@@ -69,10 +69,10 @@ index 23a26e00d3937..abe3f3a3f4eb7 100644
    for (size_t i = 0; i < kMaxPoolHandle; ++i) {
      setup_.offsets_to_metadata_[i] = SystemPageSize();
 diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h
-index 72e86feb6c3ec..e38e5e3361e56 100644
+index 38fd083670524..df1a394c12ea5 100644
 --- a/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h
 +++ b/base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h
-@@ -142,7 +142,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAddressSpace {
+@@ -146,7 +146,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAddressSpace {
  
  #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
    PA_ALWAYS_INLINE static bool IsCorePoolSizeReduced() {
@@ -81,7 +81,7 @@ index 72e86feb6c3ec..e38e5e3361e56 100644
    }
  #endif
  
-@@ -265,15 +265,16 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAddressSpace {
+@@ -269,15 +269,16 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAddressSpace {
  #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
   private:
    static bool IsIOSTestProcess();
@@ -102,7 +102,7 @@ index 72e86feb6c3ec..e38e5e3361e56 100644
      return kCorePoolSize;
    }
 diff --git a/ios/build/chrome_build.gni b/ios/build/chrome_build.gni
-index 22e5faa591147..43103d0a2055d 100644
+index 0ee3cd73ddd9f..880919097bc74 100644
 --- a/ios/build/chrome_build.gni
 +++ b/ios/build/chrome_build.gni
 @@ -30,6 +30,11 @@ declare_args() {
@@ -118,7 +118,7 @@ index 22e5faa591147..43103d0a2055d 100644
    ios_enable_share_extension = true
  
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index ece70ffe8426c..bd6690f5e6d6d 100644
+index ac03c7331b154..f80c19332986b 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
 @@ -423,7 +423,9 @@ tweak_info_plist("info_plist") {

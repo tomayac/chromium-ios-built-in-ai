@@ -67,10 +67,10 @@ Store Connect API can grant.
  create mode 100644 third_party/litert_lm/litert_lm.gni
 
 diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
-index df0e08278055e..e939ab80f4feb 100644
+index a1cd0852c32c6..44b53ba8bb0d0 100644
 --- a/chrome/browser/flag-metadata.json
 +++ b/chrome/browser/flag-metadata.json
-@@ -6401,6 +6401,11 @@
+@@ -6440,6 +6440,11 @@
      "owners": [ "olivierrobin@chromium.org", "bling-flags@google.com" ],
      "expiry_milestone": 175
    },
@@ -83,7 +83,7 @@ index df0e08278055e..e939ab80f4feb 100644
      "name": "ios-choose-from-drive-signed-out",
      "owners": [ "josephlanza@google.com", "qpubert@google.com", "bling-flags@google.com"],
 diff --git a/ios/build/chrome_build.gni b/ios/build/chrome_build.gni
-index ef490c7e894af..22e5faa591147 100644
+index 1542429813475..0ee3cd73ddd9f 100644
 --- a/ios/build/chrome_build.gni
 +++ b/ios/build/chrome_build.gni
 @@ -25,6 +25,11 @@ assert(xcode_version_int >= 2600 || target_environment == "catalyst",
@@ -99,7 +99,7 @@ index ef490c7e894af..22e5faa591147 100644
    ios_enable_share_extension = true
  
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index c7ac6596bfcdd..59ac311399a10 100644
+index eac0593c15f74..0e9c03aff882b 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
 @@ -12,6 +12,7 @@ import("//build/config/ios/rules.gni")
@@ -3109,10 +3109,10 @@ index 0000000000000..3ae09d4df2781
 +TEXT: おはようございます、お元気ですか？`},{role:`assistant`,content:`Good morning, how are you?`}];buildPrompt(t){return{systemPrompt:e.#n,initialPrompts:e.#r,userPrompt:`SOURCE: ${this.#e}\nTARGET: ${this.#t}\nTEXT: ${t}`}}},B=class extends E{#e;#t;constructor(e,t,n,r){super(e,t),this.#e=n,this.#t=r}static availability(e){if(!e||!e.sourceLanguage||!e.targetLanguage)throw TypeError(`sourceLanguage and targetLanguage are required`);let t=super.baseAvailability(e);return t.catch(()=>{}),t}static create(e){if(!e||!e.sourceLanguage||!e.targetLanguage)return Promise.reject(TypeError(`sourceLanguage and targetLanguage are required`));let t=this._createInternal(e);return t.catch(()=>{}),t}static async _createInternal(e){this._checkContext();let t=this._validateLanguageTag(e.sourceLanguage),n=this._validateLanguageTag(e.targetLanguage);await this.ensureLanguageModel(),this._checkContext();let r=new z(t,n),{systemPrompt:i,initialPrompts:a}=r.buildPrompt(``),o={...this._languageModelOptions(e),initialPrompts:[{role:`system`,content:i},...a]},s=await this._createLanguageModelSession(o,e),c=new this(s,r,t,n);return e.signal&&e.signal.addEventListener(`abort`,()=>{c.destroy(e.signal.reason)},{once:!0}),c}translate(e,t={}){return this._checkContext(),this._runTask(e,t)}translateStreaming(e,t={}){return this._checkContext(),this._runTaskStreaming(e,t)}get sourceLanguage(){return this.#e}get targetLanguage(){return this.#t}measureInputUsage(e,t={}){return super.measureInputUsage(e,t)}get inputQuota(){return super.inputQuota}};E.exposeAPIGlobally(`Translator`,B,`__FORCE_TRANSLATOR_POLYFILL__`)})();
 \ No newline at end of file
 diff --git a/ios/chrome/browser/flags/BUILD.gn b/ios/chrome/browser/flags/BUILD.gn
-index 8061f2d32ce4c..f07b19d6829ed 100644
+index 90e9e83675c76..1547b93be930d 100644
 --- a/ios/chrome/browser/flags/BUILD.gn
 +++ b/ios/chrome/browser/flags/BUILD.gn
-@@ -113,6 +113,7 @@ source_set("flags") {
+@@ -114,6 +114,7 @@ source_set("flags") {
      "//ios/chrome/browser/policy/model:policy_util",
      "//ios/chrome/browser/popup_menu/overflow_menu/public:features",
      "//ios/chrome/browser/settings/ui_bundled/password:features",
@@ -3121,21 +3121,21 @@ index 8061f2d32ce4c..f07b19d6829ed 100644
      "//ios/chrome/browser/shared/public/features:system_flags",
      "//ios/chrome/browser/snapshots/model:features",
 diff --git a/ios/chrome/browser/flags/about_flags.mm b/ios/chrome/browser/flags/about_flags.mm
-index e90703e61975d..279adcde95594 100644
+index 58671b4b51f3d..f99e43c08c829 100644
 --- a/ios/chrome/browser/flags/about_flags.mm
 +++ b/ios/chrome/browser/flags/about_flags.mm
 @@ -99,6 +99,7 @@
- #import "components/webui/flags/flags_storage.h"
  #import "components/webui/flags/flags_ui_switches.h"
  #import "ios/chrome/app/background_mode_buildflags.h"
+ #import "ios/chrome/app/background_task/features.h"
 +#import "ios/chrome/browser/built_in_ai/model/features.h"
  #import "ios/chrome/browser/autofill/model/features.h"
  #import "ios/chrome/browser/badges/model/features.h"
  #import "ios/chrome/browser/composebox/public/features.h"
-@@ -2984,6 +2985,9 @@ constexpr auto kFeatureEntries = std::to_array<flags_ui::FeatureEntry>({
-      flag_descriptions::kAppBarDisableLongPressName,
-      flag_descriptions::kAppBarDisableLongPressDescription, flags_ui::kOsIos,
-      FEATURE_VALUE_TYPE(kAppBarDisableLongPress)},
+@@ -3135,6 +3136,9 @@ constexpr auto kFeatureEntries = std::to_array<flags_ui::FeatureEntry>({
+      flag_descriptions::kEnableBackgroundContinuedProcessingDescription,
+      flags_ui::kOsIos,
+      FEATURE_VALUE_TYPE(kEnableBackgroundContinuedProcessing)},
 +    {"ios-built-in-ai-apis", flag_descriptions::kIOSBuiltInAIAPIsName,
 +     flag_descriptions::kIOSBuiltInAIAPIsDescription, flags_ui::kOsIos,
 +     FEATURE_VALUE_TYPE(kIOSBuiltInAIAPIs)},
@@ -3143,10 +3143,10 @@ index e90703e61975d..279adcde95594 100644
  
  bool SkipConditionalFeatureEntry(const flags_ui::FeatureEntry& entry) {
 diff --git a/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h b/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h
-index c06ab49f4f40d..fc28b829660d1 100644
+index 7a5ef5ecec80f..580ee71f23308 100644
 --- a/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h
 +++ b/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h
-@@ -2061,6 +2061,14 @@ inline constexpr char kZeroStateSuggestionsWCGDDescription[] =
+@@ -2114,6 +2114,14 @@ inline constexpr char kZeroStateSuggestionsWCGDDescription[] =
      "Enables showing the 'What can Gemini do' static chip in Zero-State "
      "Suggestions.";
  
@@ -3162,7 +3162,7 @@ index c06ab49f4f40d..fc28b829660d1 100644
  
  #endif  // IOS_CHROME_BROWSER_FLAGS_IOS_CHROME_FLAG_DESCRIPTIONS_H_
 diff --git a/ios/chrome/browser/web/model/BUILD.gn b/ios/chrome/browser/web/model/BUILD.gn
-index 829dc88dae974..e884e25dfd3e0 100644
+index a298606af7782..a9d9f47b308cd 100644
 --- a/ios/chrome/browser/web/model/BUILD.gn
 +++ b/ios/chrome/browser/web/model/BUILD.gn
 @@ -321,6 +321,8 @@ source_set("web_internal") {
@@ -3175,10 +3175,10 @@ index 829dc88dae974..e884e25dfd3e0 100644
      "//ios/chrome/browser/policy/model",
      "//ios/chrome/browser/prerender/model",
 diff --git a/ios/chrome/browser/web/model/chrome_web_client.mm b/ios/chrome/browser/web/model/chrome_web_client.mm
-index 83a56e872bc9e..de062a350a0bb 100644
+index 97010662f7759..dd7e1695fe6e0 100644
 --- a/ios/chrome/browser/web/model/chrome_web_client.mm
 +++ b/ios/chrome/browser/web/model/chrome_web_client.mm
-@@ -69,6 +69,8 @@
+@@ -68,6 +68,8 @@
  #import "ios/chrome/browser/link_to_text/model/link_to_text_java_script_feature.h"
  #import "ios/chrome/browser/ntp/model/browser_policy_new_tab_page_rewriter.h"
  #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
@@ -3187,7 +3187,7 @@ index 83a56e872bc9e..de062a350a0bb 100644
  #import "ios/chrome/browser/permissions/model/features.h"
  #import "ios/chrome/browser/permissions/model/geolocation_api_usage_java_script_feature.h"
  #import "ios/chrome/browser/permissions/model/media_api_usage_java_script_feature.h"
-@@ -453,6 +455,10 @@ std::vector<web::JavaScriptFeature*> ChromeWebClient::GetJavaScriptFeatures(
+@@ -452,6 +454,10 @@ std::vector<web::JavaScriptFeature*> ChromeWebClient::GetJavaScriptFeatures(
      features.push_back(webauthn::PasskeyJavaScriptFeature::GetInstance());
    }
  
