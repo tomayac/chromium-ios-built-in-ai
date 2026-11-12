@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import os
 import plistlib
@@ -96,6 +97,32 @@ def replace_strings(value, old, new):
   return value
 
 
+def swift_support(app, work):
+  """Adds Xcode's own copies of the Swift libraries the app embeds.
+
+  App Store Connect wants Apple-signed originals of every `libswift*.dylib` in
+  `Frameworks/` under `SwiftSupport/iphoneos/` (error 90426 otherwise).
+  Chrome 158 embeds `libswiftCompatibilitySpan.dylib`.
+  """
+  embedded = sorted(glob.glob(os.path.join(app, 'Frameworks', 'libswift*.dylib')))
+  if not embedded:
+    return False
+  swiftc = subprocess.run(['xcrun', '--sdk', 'iphoneos', '--find', 'swiftc'],
+                          capture_output=True, text=True, check=True).stdout
+  lib = os.path.join(os.path.dirname(os.path.dirname(swiftc.strip())), 'lib')
+  target = os.path.join(work, 'SwiftSupport', 'iphoneos')
+  os.makedirs(target)
+  for path in embedded:
+    name = os.path.basename(path)
+    # The newest Swift version comes last.
+    originals = sorted(glob.glob(os.path.join(lib, 'swift*', 'iphoneos', name)))
+    if not originals:
+      sys.exit(f'Xcode has no {name} for SwiftSupport.')
+    shutil.copy2(originals[-1], target)
+    print(f'Added {name} to SwiftSupport.')
+  return True
+
+
 def package(app_path, identity, profile, bundle_identifier, build_number,
             out_dir):
   """Re-signs a copy of the app for the App Store and zips it as an .ipa."""
@@ -161,7 +188,10 @@ def package(app_path, identity, profile, bundle_identifier, build_number,
     ipa = os.path.join(out_dir, f'BuiltInAIBrowser-{build_number}.ipa')
     if os.path.exists(ipa):
       os.remove(ipa)
-    subprocess.run(['zip', '-qry', ipa, 'Payload'], cwd=work, check=True)
+    contents = ['Payload']
+    if swift_support(copy, work):
+      contents.append('SwiftSupport')
+    subprocess.run(['zip', '-qry', ipa, *contents], cwd=work, check=True)
     return ipa
   finally:
     shutil.rmtree(work)
