@@ -23,10 +23,10 @@ Lets //ios/chrome/app build with every app extension disabled.
  6 files changed, 76 insertions(+), 11 deletions(-)
 
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index 0e9c03aff882b..ac03c7331b154 100644
+index 6756e714fa2e9..c726eb8f0a135 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
-@@ -1017,6 +1017,9 @@ chrome_app("chrome") {
+@@ -1026,6 +1026,9 @@ chrome_app("chrome") {
  
  if (current_toolchain == default_toolchain && !ios_chrome_generate_order_file) {
    _extension_toolchain = "${current_toolchain}_app_ext"

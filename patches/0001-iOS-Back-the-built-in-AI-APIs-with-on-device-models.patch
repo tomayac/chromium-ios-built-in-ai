@@ -67,10 +67,10 @@ Store Connect API can grant.
  create mode 100644 third_party/litert_lm/litert_lm.gni
 
 diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
-index a1cd0852c32c6..44b53ba8bb0d0 100644
+index 6700afb2c60a2..82f0c928867b2 100644
 --- a/chrome/browser/flag-metadata.json
 +++ b/chrome/browser/flag-metadata.json
-@@ -6440,6 +6440,11 @@
+@@ -6445,6 +6445,11 @@
      "owners": [ "olivierrobin@chromium.org", "bling-flags@google.com" ],
      "expiry_milestone": 175
    },
@@ -99,7 +99,7 @@ index 1542429813475..0ee3cd73ddd9f 100644
    ios_enable_share_extension = true
  
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index eac0593c15f74..0e9c03aff882b 100644
+index ca01028642ffb..6756e714fa2e9 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
 @@ -12,6 +12,7 @@ import("//build/config/ios/rules.gni")
@@ -110,7 +110,7 @@ index eac0593c15f74..0e9c03aff882b 100644
  import("//ios/chrome/app/chrome_app.gni")
  import("//ios/chrome/features.gni")
  import("//ios/features.gni")
-@@ -422,7 +423,11 @@ tweak_info_plist("info_plist") {
+@@ -429,7 +430,11 @@ tweak_info_plist("info_plist") {
  }
  
  compile_entitlements("entitlements") {
@@ -123,7 +123,7 @@ index eac0593c15f74..0e9c03aff882b 100644
    if (ios_chrome_entitlements_additions != []) {
      entitlements_templates += ios_chrome_entitlements_additions
    }
-@@ -903,6 +908,11 @@ chrome_app("chrome") {
+@@ -912,6 +917,11 @@ chrome_app("chrome") {
  
    link_framework_first = "EarlyMallocZoneRegistration"
  
@@ -3121,7 +3121,7 @@ index 90e9e83675c76..1547b93be930d 100644
      "//ios/chrome/browser/shared/public/features:system_flags",
      "//ios/chrome/browser/snapshots/model:features",
 diff --git a/ios/chrome/browser/flags/about_flags.mm b/ios/chrome/browser/flags/about_flags.mm
-index 58671b4b51f3d..f99e43c08c829 100644
+index 1433a89b099e5..188c1d44e3a70 100644
 --- a/ios/chrome/browser/flags/about_flags.mm
 +++ b/ios/chrome/browser/flags/about_flags.mm
 @@ -99,6 +99,7 @@
@@ -3132,10 +3132,10 @@ index 58671b4b51f3d..f99e43c08c829 100644
  #import "ios/chrome/browser/autofill/model/features.h"
  #import "ios/chrome/browser/badges/model/features.h"
  #import "ios/chrome/browser/composebox/public/features.h"
-@@ -3135,6 +3136,9 @@ constexpr auto kFeatureEntries = std::to_array<flags_ui::FeatureEntry>({
-      flag_descriptions::kEnableBackgroundContinuedProcessingDescription,
+@@ -3141,6 +3142,9 @@ constexpr auto kFeatureEntries = std::to_array<flags_ui::FeatureEntry>({
       flags_ui::kOsIos,
-      FEATURE_VALUE_TYPE(kEnableBackgroundContinuedProcessing)},
+      FEATURE_VALUE_TYPE(
+          password_manager::features::kRemoteActorCredentialSharing)},
 +    {"ios-built-in-ai-apis", flag_descriptions::kIOSBuiltInAIAPIsName,
 +     flag_descriptions::kIOSBuiltInAIAPIsDescription, flags_ui::kOsIos,
 +     FEATURE_VALUE_TYPE(kIOSBuiltInAIAPIs)},
@@ -3143,10 +3143,10 @@ index 58671b4b51f3d..f99e43c08c829 100644
  
  bool SkipConditionalFeatureEntry(const flags_ui::FeatureEntry& entry) {
 diff --git a/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h b/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h
-index 7a5ef5ecec80f..580ee71f23308 100644
+index f81fda8cd657f..f0cffce1a7852 100644
 --- a/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h
 +++ b/ios/chrome/browser/flags/ios_chrome_flag_descriptions.h
-@@ -2114,6 +2114,14 @@ inline constexpr char kZeroStateSuggestionsWCGDDescription[] =
+@@ -2121,6 +2121,14 @@ inline constexpr char kZeroStateSuggestionsWCGDDescription[] =
      "Enables showing the 'What can Gemini do' static chip in Zero-State "
      "Suggestions.";
  

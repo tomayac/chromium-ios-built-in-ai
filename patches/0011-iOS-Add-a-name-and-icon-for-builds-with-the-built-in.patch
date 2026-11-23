@@ -38,10 +38,10 @@ index 880919097bc74..648d6e063afbe 100644
    ios_enable_share_extension = true
  
 diff --git a/ios/chrome/app/BUILD.gn b/ios/chrome/app/BUILD.gn
-index f80c19332986b..99cc55018ed82 100644
+index 66294abeca206..0442c7b3a7b5e 100644
 --- a/ios/chrome/app/BUILD.gn
 +++ b/ios/chrome/app/BUILD.gn
-@@ -898,6 +898,11 @@ ios_framework_bundle("early_partition_alloc_framework") {
+@@ -907,6 +907,11 @@ ios_framework_bundle("early_partition_alloc_framework") {
    ]
  }
  
@@ -53,7 +53,7 @@ index f80c19332986b..99cc55018ed82 100644
  chrome_app("chrome") {
    output_name = chromium_short_name
  
-@@ -989,6 +994,7 @@ chrome_app("chrome") {
+@@ -998,6 +1003,7 @@ chrome_app("chrome") {
      "CHROMIUM_BUNDLE_ID=$ios_chromium_bundle_id",
      "CHROMIUM_HANDOFF_ID=$chromium_handoff_id",
      "CHROMIUM_SHORT_NAME=$chromium_short_name",

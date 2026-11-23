@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Steiner <tomac@chromium.org>
+Date: Wed, 4 Nov 2026 21:23:32 +0100
+Subject: [PATCH] [iOS] Block over-the-air app installation links
+
+App Review rejected the app under Guideline 2.5.2, since handing an
+over-the-air installation URL to iOS installs an app. The scheme is no
+longer one of the app store schemes, and every scheme that looks like
+one without being one is blocked: the navigation policy cancels it, and
+the app launcher refuses it right before UIApplication would see it.
+itms-apps and itms-beta still open the App Store and TestFlight.
+---
+ .../model/app_launcher_browser_agent.mm             |  4 +++-
+ .../app_launcher/model/app_launcher_tab_helper.mm   |  6 ++++++
+ ios/chrome/browser/shared/model/url/url_util.h      |  5 +++++
+ ios/chrome/browser/shared/model/url/url_util.mm     |  9 ++++++++-
+ .../browser/shared/model/url/url_util_unittest.mm   | 13 ++++++++++++-
+ 5 files changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/ios/chrome/browser/app_launcher/model/app_launcher_browser_agent.mm b/ios/chrome/browser/app_launcher/model/app_launcher_browser_agent.mm
+index 7a842eba48a0e..b6ad0252b793f 100644
+--- a/ios/chrome/browser/app_launcher/model/app_launcher_browser_agent.mm
++++ b/ios/chrome/browser/app_launcher/model/app_launcher_browser_agent.mm
+@@ -125,7 +125,9 @@ void AppLauncherOverlayCallback(
+ void LaunchExternalApp(const GURL url,
+                        base::OnceCallback<void(bool)> completion,
+                        bool user_accepted = true) {
+-  if (!user_accepted) {
++  // The navigation policy cancels these already. This is the last step before
++  // the system sees the URL, so no other path can hand one over either.
++  if (!user_accepted || UrlHasBlockedAppStoreScheme(url)) {
+     std::move(completion).Run(false);
+     return;
+   }
+diff --git a/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm b/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm
+index 834bd1d8b3346..3e252c47d6ff9 100644
+--- a/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm
++++ b/ios/chrome/browser/app_launcher/model/app_launcher_tab_helper.mm
+@@ -333,6 +333,12 @@ AppLauncherTabHelper::GetPolicyDecisionAndOptionalAppLaunchRequest(
+             kNoAppLaunchRequest};
+   }
+ 
++  // Links that install apps over the air, which App Store apps must not do (App
++  // Review Guideline 2.5.2), go nowhere.
++  if (UrlHasBlockedAppStoreScheme(request_url)) {
++    return {PolicyDecision::Cancel(), kNoAppLaunchRequest};
++  }
++
+   // Do not allow allow navigation if URL is blocked by enterprise policy.
+   ProfileIOS* profile =
+       ProfileIOS::FromBrowserState(web_state()->GetBrowserState());
+diff --git a/ios/chrome/browser/shared/model/url/url_util.h b/ios/chrome/browser/shared/model/url/url_util.h
+index 99eb0e80e4df0..ec9207194ac0d 100644
+--- a/ios/chrome/browser/shared/model/url/url_util.h
++++ b/ios/chrome/browser/shared/model/url/url_util.h
+@@ -65,6 +65,11 @@ bool UrlHasAppStoreScheme(const GURL& url);
+ // Returns whether `scheme` is an app store scheme.
+ bool SchemeIsAppStoreScheme(const std::string& scheme);
+ 
++// Returns whether `url` has a scheme that looks like an app store scheme
++// without being one, such as Apple's over-the-air app installation scheme.
++// The browser never hands these to the system.
++bool UrlHasBlockedAppStoreScheme(const GURL& url);
++
+ @end
+ 
+ #endif  // IOS_CHROME_BROWSER_SHARED_MODEL_URL_URL_UTIL_H_
+diff --git a/ios/chrome/browser/shared/model/url/url_util.mm b/ios/chrome/browser/shared/model/url/url_util.mm
+index 1ff07d92559cb..5e7a14cd47679 100644
+--- a/ios/chrome/browser/shared/model/url/url_util.mm
++++ b/ios/chrome/browser/shared/model/url/url_util.mm
+@@ -140,7 +140,7 @@ NSSet<NSString*>* GetItmsSchemes() {
+                        // There's no evidence that itms-bookss is actually
+                        // supported, but over-inclusion costs less than
+                        // under-inclusion.
+-                       @"itms-books", @"itms-bookss", @"itms-services",
++                       @"itms-books", @"itms-bookss",
+                        @"itms-beta", @"itms-betas", @"itms-watch",
+                        @"itms-watchs", @"itms-podcasts", @"itms-podcastss",
+                        nil];
+@@ -156,4 +156,11 @@ bool SchemeIsAppStoreScheme(const std::string& scheme) {
+   return [GetItmsSchemes() containsObject:base::SysUTF8ToNSString(scheme)];
+ }
+ 
++bool UrlHasBlockedAppStoreScheme(const GURL& url) {
++  // Anything that looks like an Apple store scheme but is not one of the known
++  // store and TestFlight schemes, which leaves out the over-the-air app
++  // installation scheme (App Review Guideline 2.5.2).
++  return url.GetScheme().starts_with("itms") && !UrlHasAppStoreScheme(url);
++}
++
+ @end
+diff --git a/ios/chrome/browser/shared/model/url/url_util_unittest.mm b/ios/chrome/browser/shared/model/url/url_util_unittest.mm
+index ab5f4af3bb36d..5905ea612a79e 100644
+--- a/ios/chrome/browser/shared/model/url/url_util_unittest.mm
++++ b/ios/chrome/browser/shared/model/url/url_util_unittest.mm
+@@ -117,6 +117,17 @@ TEST_F(ChromeURLUtilTest, GetAllBundleURLSchemes) {
+   EXPECT_TRUE([schemes containsObject:unittestScheme]);
+ }
+ 
++TEST_F(ChromeURLUtilTest, UrlHasBlockedAppStoreScheme) {
++  EXPECT_TRUE(UrlHasBlockedAppStoreScheme(
++      GURL("itms-services://?action=download-manifest&url=https://example.com/"
++           "app.plist")));
++  EXPECT_FALSE(UrlHasBlockedAppStoreScheme(
++      GURL("itms-apps://itunes.apple.com/us/app/appname/id123")));
++  EXPECT_FALSE(UrlHasBlockedAppStoreScheme(
++      GURL("itms-beta://testflight.apple.com/join/123")));
++  EXPECT_FALSE(UrlHasBlockedAppStoreScheme(GURL("https://example.com/")));
++}
++
+ TEST_F(ChromeURLUtilTest, UrlHasAppStoreScheme) {
+   EXPECT_TRUE(UrlHasAppStoreScheme(
+       GURL("itms://itunes.apple.com/us/app/appname/id123")));
+@@ -130,7 +141,7 @@ TEST_F(ChromeURLUtilTest, UrlHasAppStoreScheme) {
+       GURL("itms-books://itunes.apple.com/us/app/appname/id123")));
+   EXPECT_TRUE(UrlHasAppStoreScheme(
+       GURL("itms-bookss://itunes.apple.com/us/app/appname/id123")));
+-  EXPECT_TRUE(UrlHasAppStoreScheme(
++  EXPECT_FALSE(UrlHasAppStoreScheme(
+       GURL("itms-services://?action=download-manifest&url=https://example.com/"
+            "app.plist")));
+   EXPECT_TRUE(
